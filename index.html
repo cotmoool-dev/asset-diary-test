@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>자산 일기 (테스트)</title>
+<meta name="theme-color" content="#fdf8ef" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#2a2420" media="(prefers-color-scheme: dark)">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="자산일기 테스트">
+<meta name="format-detection" content="telephone=no">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" type="image/png" sizes="192x192" href="icon-192.png">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Gaegu:wght@700&family=Gowun+Dodum&family=Jua&display=swap">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<div id="lockScreen" class="lock-screen" hidden></div>
+<header class="topbar">
+  <div class="topbar-inner">
+    <div>
+      <h1 id="screenTitle">홈</h1>
+      <span class="date" id="todayLabel"></span>
+    </div>
+    <button class="icon-btn" data-action="refresh-prices" aria-label="시세 새로고침" title="시세 새로고침"><i class="emo">🔄</i></button>
+  </div>
+</header>
+
+<main id="app" class="screen" aria-live="polite"></main>
+
+<button id="fab" class="fab" hidden aria-label="추가"><i class="emo">✏️</i></button>
+
+<nav class="tabbar" aria-label="탭">
+  <button data-tab="home" class="on"><i class="emo">🏡</i><span>홈</span></button>
+  <button data-tab="assets"><i class="emo">👛</i><span>자산</span></button>
+  <button data-tab="book"><i class="emo">💰</i><span>가계부</span></button>
+  <button data-tab="tx"><i class="emo">📒</i><span>거래</span></button>
+  <button data-tab="rebal"><i class="emo">⚖️</i><span>균형</span></button>
+  <button data-tab="settings"><i class="emo">🧸</i><span>설정</span></button>
+</nav>
+
+<div id="sheet" class="sheet-wrap" hidden>
+  <div class="sheet-backdrop" data-action="close-sheet"></div>
+  <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="sheetTitle">
+    <div class="sheet-grip"></div>
+    <div class="sheet-head">
+      <button class="link-btn" data-action="close-sheet">닫기</button>
+      <h2 id="sheetTitle"></h2>
+      <button class="link-btn strong" id="sheetSave">저장</button>
+    </div>
+    <div class="sheet-body" id="sheetBody"></div>
+  </div>
+</div>
+
+<div id="toast" class="toast" hidden></div>
+<input type="file" id="importFile" accept="application/json,.json" hidden>
+
+<script src="app.js"></script>
+</body>
+</html>
