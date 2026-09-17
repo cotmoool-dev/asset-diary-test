@@ -231,6 +231,10 @@ input[type=date].input::-webkit-date-and-time-value{text-align:left}
   background:var(--ink);color:var(--paper);padding:11px 18px;border-radius:999px;font:400 15px var(--f-round);max-width:calc(100% - 40px);text-align:center;box-shadow:0 8px 22px rgba(0,0,0,.2);animation:pop .3s cubic-bezier(.2,1.4,.4,1)}
 @keyframes pop{from{transform:translateX(-50%) scale(.7);opacity:0}}
 
+.update-banner{position:fixed;left:0;right:0;top:0;z-index:80;width:100%;border:none;border-radius:0;
+  padding:calc(12px + env(safe-area-inset-top,0px)) 16px 12px;background:var(--accent-deep);color:var(--accent-ink);
+  font:600 14.5px var(--f-round);text-align:center;box-shadow:0 4px 14px rgba(0,0,0,.18);cursor:pointer;animation:pop .3s cubic-bezier(.2,1.4,.4,1)}
+
 @media (min-width:600px){ .stats{grid-template-columns:repeat(4,minmax(0,1fr))} }
 @media (prefers-reduced-motion:reduce){ *{animation:none!important;transition:none!important} }
 
@@ -303,6 +307,13 @@ input[type=date].input::-webkit-date-and-time-value{text-align:left}
 .chip.on:disabled{opacity:.75}
 .big-input{font:400 26px var(--f-round)!important;text-align:right}
 #b_group button{font-size:12.5px;padding:9px 2px}
+
+/* ── 계좌 관리(테스트버전 신규) ── */
+.account-detail{padding:0 16px 8px}
+.account-detail .list{margin:6px 0 10px;box-shadow:none}
+.holding-group-body{padding:0}
+.inst-suggest{margin:-8px 0 12px}
+.inst-suggest .chip{font-size:13px;padding:6px 10px}
 
 /* ── 테스트버전 추가 스타일 ── */
 .action-card{background:linear-gradient(160deg,var(--accent-soft),var(--card) 70%);cursor:pointer}
