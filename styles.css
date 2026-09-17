@@ -316,6 +316,9 @@ input[type=date].input::-webkit-date-and-time-value{text-align:left}
 .inst-suggest .chip{font-size:13px;padding:6px 10px}
 
 /* ── 테스트버전 추가 스타일 ── */
+/* 투자 포트폴리오 탭 섹션 전환용 — 항목이 6개라 줄바꿈 대신 가로 스크롤(요구사항 I) */
+.chips-scroll{flex-wrap:nowrap;overflow-x:auto;-webkit-overflow-scrolling:touch;padding-bottom:2px}
+.chips-scroll .chip{flex:none;white-space:nowrap}
 .action-card{background:linear-gradient(160deg,var(--accent-soft),var(--card) 70%);cursor:pointer}
 .action-card .label{font:700 14px/1.2 var(--f-hand);color:var(--ink2);margin-bottom:4px}
 details.more{margin:14px 0}

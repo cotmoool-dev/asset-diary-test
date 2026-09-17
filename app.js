@@ -8,7 +8,7 @@
  * 테스트버전: Perplexity 리뷰 반영판. 실제 데이터와 분리하기 위해 저장 키를 다르게 씀.
  */
 const STORE_KEY = 'myAssets.v4.test';
-const APP_BUILD = 'v1.20.0'; // sw.js의 CACHE 버전과 항상 맞춰서 올릴 것 — 설정 화면에 그대로 노출해서, 실제 폰에 반영된 버전을 화면 캡처 하나로 바로 확인할 수 있게 함
+const APP_BUILD = 'v1.22.0'; // sw.js의 CACHE 버전과 항상 맞춰서 올릴 것 — 설정 화면에 그대로 노출해서, 실제 폰에 반영된 버전을 화면 캡처 하나로 바로 확인할 수 있게 함
 const APP_VERSION_LABEL = '자산 일기 테스트판 · Perplexity 리뷰 반영';
 /* 리밸런싱 세금·수수료 근사치(설정에서 조정 가능). 실제 세율은 보유기간·공제·상품에 따라 달라요. */
 const DEFAULT_TAX_RATES = {
@@ -94,6 +94,8 @@ const DEFAULT_TARGETS = { '현금성자산': 8, '국내주식': 19, '해외주�
 /* 국내주식·해외주식의 섹터·국가 구성 보기용. 섹터는 GICS(글로벌 산업 분류 기준) 11개 섹터를 우리말로 옮기고, 지수형·채권형 ETF처럼 한 섹터로 못 묶는 것들을 위한 항목을 더했어요(설정 화면에 이 기준을 안내해요). */
 const SECTORS = ['정보기술', '금융', '헬스케어', '산업재', '임의소비재', '필수소비재', '에너지', '소재', '유틸리티', '부동산', '통신서비스', '지수형 ETF(혼합)', '채권형 ETF', '기타'];
 const COUNTRIES = ['한국', '미국', '중국', '일본', '유럽', '신흥국', '글로벌(전세계)', '기타'];
+/* 원자재 세부 종류(요구사항 #7) — 원자재 카테고리는 원래 금 전용이었어서, 값이 없는 기존/신규 자산은 normAsset()에서 '금'으로 기본 처리함 */
+const COMMODITY_TYPES = ['금', '은', '원유', '기타원자재'];
 /* 잘 알려진 종목의 섹터·국가 기본값 — 종목명(한글) 또는 티커(영문 대문자)로 찾아요. 여기 없는 종목은 사용자가 고른 값을 기억해서 다음부터 자동으로 채워요(설정에 저장). */
 const STOCK_META = {
   '삼성전자': { sector: '정보기술', country: '한국' }, 'SK하이닉스': { sector: '정보기술', country: '한국' },
@@ -189,26 +191,81 @@ const COMP_LABEL_COLOR = {
   '미분류': '#9aa3af',         // 그레이
   '기타': '#c9ced6',           // 연한 그레이
 };
-/* 자산군별 구성 분석 탭 설정 — 배열의 첫 항목이 기본 선택 탭(요구사항 #5) */
-const COMP_TABS = {
-  '국내주식': [
-    { key: 'sector', label: '섹터별', dim: '섹터', emo: '🏷️', group: a => a.sector || null },
-    { key: 'country', label: '국가별', dim: '국가', emo: '🌍', group: a => a.country || null },
-  ],
-  '해외주식': [
-    { key: 'country', label: '국가별', dim: '국가', emo: '🌍', group: a => a.country || null },
-    { key: 'sector', label: '섹터별', dim: '섹터', emo: '🏷️', group: a => a.sector || null },
-  ],
-  '연금·IRP': [
-    { key: 'class', label: '자산군별', dim: '자산군', emo: '🧺', group: a => a.penClass || null },
-    { key: 'country', label: '국가별', dim: '국가', emo: '🌍', group: a => a.penCountry || null },
-    { key: 'sector', label: '섹터별', dim: '섹터', emo: '🏷️', group: a => a.penSector || null },
-    { key: 'product', label: '상품유형별', dim: '상품유형', emo: '🧩', group: a => a.penProduct || null },
-  ],
-  '암호화폐': [
-    { key: 'name', label: '종목별', dim: '종목', emo: '🪙', group: a => a.name || null },
-  ],
+/* 계좌 통화 라벨 — 개별 계좌 선택 시 헤더 카드의 "기본 통화"(요구사항 #9)에 씀 */
+function curLabel(cur) { return cur === 'USD' ? '달러' : '원화'; }
+/* 계좌 라벨 — 기관명이 있으면 "기관명 별칭", 없으면 별칭만. 계좌 미연결이면 null(→ 미분류 버킷, 별도 라벨 없이 기존 메커니즘 재사용) */
+function accountLabelOf(a) {
+  const acc = S.accounts.find(x => x.id === a.accountId);
+  return acc ? (acc.institution ? acc.institution + ' ' + acc.alias : acc.alias) : null;
+}
+/* "자산군" 화면(요구사항 #5) 전용 고정 색상 — COMP_LABEL_COLOR(국가·섹터용)와는 다른 분류 체계라 섞지 않음. 채권·안전자산은 텍스트가 같아 기존 색을 그대로 재사용 */
+const ASSET_CLASS_COLOR = {
+  '주식·주식형 ETF': '#ff8fa3',
+  '연금·퇴직연금': '#7fb88a',
+  '채권·안전자산': COMP_LABEL_COLOR['채권·안전자산'],
+  '원자재·금': '#e0b34d',
+  '암호화폐': '#c79ef2',
+  '현금성 투자대기자금': COMP_LABEL_COLOR['현금성 자산'],
+  '기타 투자자산': '#c9ced6',
 };
+/* 자산군별 비중(요구사항 D) — buildCompositionRows의 groupKeyFn 방식이 아니라 직접 계산함(버킷마다 서로 겹치는 카테고리 조각을 끌어와야 해서).
+ * 연금·IRP 중 주식형(penClass==='주식형')은 "주식·주식형 ETF"에만 넣고 "연금·퇴직연금"에서는 빼서 이중집계를 막음.
+ * list/dbAccounts는 이미 "분석 대상" 스코프로 좁혀진 값을 받는다(scopedPortfolioAssets/portfolioScopeDbAccounts 호출부 참고). */
+function portfolioAssetClassRows(list, dbAccounts) {
+  const stockEquity = a => a.cat === '국내주식' || a.cat === '해외주식' || (a.cat === '연금·IRP' && a.penClass === '주식형');
+  const sum = f => list.filter(f).reduce((s, a) => s + valueOf(a), 0);
+  const pensionRemainder = sum(a => a.cat === '연금·IRP' && a.penClass !== '주식형')
+    + dbAccounts.filter(a => a.dbIncludeAnalysis).reduce((s, a) => s + a.dbValuation, 0);
+  return [
+    { label: '주식·주식형 ETF', value: sum(stockEquity) },
+    { label: '연금·퇴직연금', value: pensionRemainder },
+    { label: '채권·안전자산', value: sum(a => a.cat === '채권·안전자산') },
+    { label: '원자재·금', value: sum(a => a.cat === '원자재') },
+    { label: '암호화폐', value: sum(a => a.cat === '암호화폐') },
+    { label: '현금성 투자대기자금', value: sum(a => a.cat === '현금성자산') },
+    { label: '기타 투자자산', value: sum(a => a.cat === '기타') },
+  ].filter(r => r.value > 0);
+}
+/* 투자 포트폴리오 "분석 대상" 범위 선택(요구사항 #4~#6). key는 <select>의 value로 그대로 씀 */
+const PORTFOLIO_SCOPE_GROUPS = [
+  { key: 'all', label: '전체 투자자산', match: () => true },
+  { key: 'general', label: '일반 위탁계좌 전체', match: acc => acc.cls === '일반 투자' },
+  { key: 'isa', label: 'ISA 전체', match: acc => acc.cls === '절세 투자' },
+  { key: 'pension-savings', label: '연금저축 전체', match: acc => ['연금저축펀드', '연금저축보험'].includes(acc.type) },
+  { key: 'irp', label: 'IRP 전체', match: acc => ['개인형 IRP', '퇴직금 IRP'].includes(acc.type) },
+  { key: 'pension-all', label: '연금·퇴직연금 전체', match: acc => acc.cls === '연금·퇴직연금' },
+  { key: 'commodity-acct', label: '원자재·금 계좌 전체', match: acc => acc.cls === '원자재·실물' },
+  { key: 'crypto-acct', label: '가상자산 거래소·지갑 전체', match: acc => acc.cls === '가상자산' },
+];
+function portfolioScopeGroup(key) { return PORTFOLIO_SCOPE_GROUPS.find(g => g.key === key) || PORTFOLIO_SCOPE_GROUPS[0]; }
+/* 스코프에 해당하는 "실제"(DB 아닌) 계좌들 — 빈 상태 판정(요구사항 #11)과 자산 필터링에 씀 */
+function portfolioScopeAccounts(scope) {
+  if (scope.kind === 'account') { const acc = S.accounts.find(x => x.id === scope.id); return (acc && !isDbPensionAccount(acc)) ? [acc] : []; }
+  const group = portfolioScopeGroup(scope.key);
+  return S.accounts.filter(acc => !isDbPensionAccount(acc) && group.match(acc));
+}
+/* 스코프에 해당하는 DB형 퇴직연금 계좌 — 종목 분석엔 안 넣고 별도 요약 카드로만 보여줌(요구사항 #10) */
+function portfolioScopeDbAccounts(scope) {
+  if (scope.kind === 'account') { const acc = S.accounts.find(x => x.id === scope.id); return (acc && isDbPensionAccount(acc)) ? [acc] : []; }
+  const group = portfolioScopeGroup(scope.key);
+  return dbPensionAccounts().filter(group.match);
+}
+/* 스코프로 좁힌 실제 보유자산 목록(요구사항 #7·#12) — 'all'이면 전체, 아니면 해당 계좌들에 연결된 것만 */
+function scopedPortfolioAssets(scope) {
+  const pa = portfolioAssets();
+  if (scope.kind === 'group' && scope.key === 'all') return pa;
+  const ids = new Set(portfolioScopeAccounts(scope).map(a => a.id));
+  return pa.filter(a => ids.has(a.accountId));
+}
+/* 투자 포트폴리오 4개 분석 탭(요구사항 #8) — 배열 순서가 탭 표시 순서, 첫 항목이 기본 탭 */
+const PORTFOLIO_TABS = [
+  { key: 'class', label: '자산군', emo: '🧭' },
+  { key: 'country', label: '국가·지역', emo: '🌍' },
+  { key: 'sector', label: '섹터', emo: '🏷️' },
+  { key: 'item', label: '종목', emo: '💼' },
+];
+/* "종목" 탭 그룹핑(요구사항 F) — 원자재는 commodityType(금/은/원유 등)으로, 그 밖엔 종목명으로 묶음 */
+function itemGroupKey(a) { return (a.cat === '원자재' ? a.commodityType : a.name) || null; }
 const TX_TYPES = { buy: '매수', sell: '매도', div: '배당' };
 const TITLES = { home: '자산 일기', assets: '내 보물함', book: '가계부', tx: '거래 일기', rebal: '균형 맞추기', settings: '설정' };
 const BOOK = {
@@ -262,7 +319,7 @@ function defaultState() {
 }
 
 let S = load();
-let ui = { tab: 'home', txFilter: 'all', open: {}, tradeHist: {}, rebalMode: 'add', extra: 0, bookMonth: '', perfPeriod: 'month', gapRelative: false, compOpen: {}, compTab: {}, returnGuideOpen: false, assetsTab: 'holdings', accountFilter: '전체', holdingGroupOpen: {}, acctOpen: {} };
+let ui = { tab: 'home', txFilter: 'all', open: {}, tradeHist: {}, rebalMode: 'add', extra: 0, bookMonth: '', perfPeriod: 'month', gapRelative: false, returnGuideOpen: false, assetsTab: 'holdings', accountFilter: '전체', holdingGroupOpen: {}, acctOpen: {}, portfolioScope: { kind: 'group', key: 'all' }, portfolioTabKey: 'class' };
 
 function load() {
   try {
@@ -362,7 +419,11 @@ function normAsset(a) {
     components: Array.isArray(a.components) ? a.components.map(c => ({ name: c.name || '', pct: num(c.pct) })) : [],
     memo: a.memo || '',
     dep: normDep(a.dep),
-    accountId: a.accountId || ''
+    accountId: a.accountId || '',
+    // 원자재 세부 종류(요구사항 #7) — 값이 없으면 원자재 카테고리는 '금'으로 기본 처리(원래 금 전용이었던 자산이 미분류로 빠지지 않게)
+    commodityType: COMMODITY_TYPES.includes(a.commodityType) ? a.commodityType : (a.cat === '원자재' ? '금' : ''),
+    // 투자 포트폴리오 분석 포함 여부 — '기타' 카테고리에서만 폼에 노출·설정되고, 기본값은 제외(요구사항 #9)
+    portfolioInclude: !!a.portfolioInclude
   };
 }
 /* 계좌(요구사항 #2~#8, #13) — 대분류·유형은 ACCOUNT_CLASSES/ACCOUNT_TYPES_BY_CLASS만 신뢰, 목록에 없으면 대분류의 첫 유형으로 되돌림 */
@@ -585,6 +646,14 @@ function totals() {
   const unreal = value - cost;
   return { value, cost, unreal, unrealPct: cost > 0 ? unreal / cost * 100 : 0, byCat, byPurpose, divAll, divYear, intAll, intYear, incomeAll, incomeYear, realized, totalReturn: unreal + realized + incomeAll };
 }
+/* 투자 포트폴리오 탭 전용 자산 필터(요구사항 B) — 부동산은 전부 제외, '기타'는 사용자가 토글로 opt-in한 것만.
+ * totals()/홈 도넛은 이 함수를 쓰지 않고 그대로 S.assets를 씀 — 이번 라운드에서 손대지 않기로 한 부분이라 절대 섞지 않음. */
+function portfolioEligible(a) {
+  if (a.cat === '부동산') return false;
+  if (a.cat === '기타') return !!a.portfolioInclude;
+  return true;
+}
+function portfolioAssets() { return S.assets.filter(portfolioEligible); }
 function needsFx() { return S.assets.some(a => (a.mode === 'qty' && a.cur === 'USD') || (a.cat === '원자재' && a.src === 'twelvedata')); }
 function prevSnapshot() { return S.snapshots.filter(s => s.month < monthKey()).sort((a, b) => b.month.localeCompare(a.month))[0]; }
 
@@ -898,24 +967,24 @@ function dbPensionSyntheticRow(acc) {
   return {
     id: 'db:' + acc.id, name: acc.alias || 'DB형 퇴직연금', cat: '연금·IRP',
     mode: 'amount', amount: acc.dbValuation, cost: acc.dbValuation, dep: { kind: 'none' },
+    type: 'DB형 퇴직연금', // 계좌유형별 탭에서 실제 계좌 조회 없이 바로 'DB형 퇴직연금' 그룹으로 잡히게(ACCOUNT_TYPES_BY_CLASS의 문자열과 동일)
     penClass: '대체자산', penCountry: '한국', penSector: '기타', penProduct: 'DB형 퇴직연금', penProductEstimated: false,
     dbAccountId: acc.id, isDbSynthetic: true
   };
 }
-/* 자산군 카드 아래 '구성 분석 보기' 아코디언 — 접혀있을 땐 버튼만, 펼치면 탭(있으면) + 도넛 또는 요약 문장 + 미분류 안내 + (국가 탭이면) 산정 기준 문구를 보여줌 */
-function compositionAccordion(cat, list) {
-  const tabs = COMP_TABS[cat];
-  if (!tabs || !tabs.length || !list.length) return '';
-  const open = !!ui.compOpen[cat];
-  const toggleBtn = `<button type="button" class="btn block comp-toggle" data-action="comp-toggle" data-cat="${cat}" aria-expanded="${open}">${open ? '구성 분석 접기 ▲' : '구성 분석 보기 ▼'}</button>`;
-  if (!open) return toggleBtn;
-  const tabKey = ui.compTab[cat] || tabs[0].key;
+/* 투자 포트폴리오 탭의 상시 노출 구성 분석 블록(요구사항 J) — 예전 "구성 분석 보기" 아코디언(접기/펼치기)을 대체함.
+ * 전용 화면으로 옮겨온 이상 접어둘 이유가 없어서 항상 펼친 상태로 렌더링하고, 탭(있으면) + 도넛 또는 요약 문장 + 미분류 안내
+ * + (국가 탭이면) 산정 기준 문구 + (상품유형 탭이면) 추정치 안내를 보여줌 — 옛 아코디언의 "펼친 몸통" 로직을 그대로 재사용.
+ * sectionKey는 내부 탭 전환 버튼(data-section 값)을 구분하기 위한 것으로, tabs가 1개뿐이면 tabSwitcher 자체가 렌더링되지 않아 안 써도 됨. */
+function compositionBlock(list, tabs, tabKey, sectionKey) {
+  if (!tabs || !tabs.length) return '';
+  if (!list.length) return `<p class="small muted" style="margin:10px 4px">아직 이 항목에 해당하는 자산이 없어요.</p>`;
   const tab = tabs.find(t => t.key === tabKey) || tabs[0];
   const result = buildCompositionRows(list, tab.group);
-  const tabSwitcher = tabs.length > 1 ? `<div class="seg" style="margin:0 0 10px">${tabs.map(t => `<button type="button" data-action="comp-tab" data-cat="${cat}" data-k="${t.key}" class="${t.key === tab.key ? 'on' : ''}">${esc(t.label)}</button>`).join('')}</div>` : '';
+  const tabSwitcher = tabs.length > 1 ? `<div class="seg" style="margin:0 0 10px">${tabs.map(t => `<button type="button" data-action="portfolio-tab" data-section="${sectionKey}" data-k="${t.key}" class="${t.key === tab.key ? 'on' : ''}">${esc(t.label)}</button>`).join('')}</div>` : '';
   let body;
   if (result.mode === 'single') {
-    const est = cat === '연금·IRP' && tab.key === 'product' && result.asset.penProductEstimated ? ' (추정)' : '';
+    const est = (tab.key === 'product' && result.asset.penProductEstimated) ? ' (추정)' : '';
     body = `<p class="small muted" style="margin:4px 2px 2px">${tab.dim}: ${esc(result.label)}${est} ${pct(100)}</p>
       <p class="small faint" style="margin:2px 2px 10px">종목이 2개 이상이면 구성 차트가 표시됩니다.</p>`;
   } else {
@@ -926,8 +995,8 @@ function compositionAccordion(cat, list) {
     ? `<p class="small faint" style="margin:8px 2px 0">🌱 미분류 ${result.unclassifiedAssets.length}건 · ${won(result.unclassifiedAssets.reduce((s, a) => s + valueOf(a), 0))} — 눌러서 채워주세요: ${result.unclassifiedAssets.map(a => `<button type="button" class="link-btn" style="font-size:12.5px" data-action="edit-asset" data-id="${a.id}">${esc(a.name)}</button>`).join(', ')}</p>`
     : '';
   const countryFootnote = tab.key === 'country' ? `<p class="small faint" style="margin:6px 2px 0">🌍 국가 비중은 기초자산의 주요 투자국 기준입니다.</p>` : '';
-  const estimatedNote = (cat === '연금·IRP' && tab.key === 'product') ? pensionEstimatedNote(list) : '';
-  return `${toggleBtn}<div class="subchart" style="margin:10px 0 14px">${tabSwitcher}${body}${unclassNote}${countryFootnote}${estimatedNote}</div>`;
+  const estimatedNote = tab.key === 'product' ? pensionEstimatedNote(list) : '';
+  return `<div class="subchart" style="margin:10px 0 14px">${tabSwitcher}${body}${unclassNote}${countryFootnote}${estimatedNote}</div>`;
 }
 
 /* 보유 자산이 아예 없는 분류는 "부족"으로 겁주지 않고 'empty'(미보유)로 따로 분리해서 표시함.
@@ -999,27 +1068,122 @@ function monthsCard(T) {
 }
 
 /* 자산 */
-/* 자산 탭 상단 "보유자산 / 계좌" 전환 — 별도 하단 메뉴를 추가하지 않고 이 안에서만 오간다(요구사항 #1, H) */
+/* 자산 탭 상단 "보유자산 / 투자 포트폴리오 / 계좌 관리" 전환 — 별도 하단 메뉴를 추가하지 않고 이 안에서만 오간다(요구사항 #1) */
 function viewAssets() {
+  const t = ui.assetsTab;
   const seg = `<div class="seg" id="assetsTabSeg" style="margin:2px 0 14px">
-    <button type="button" data-action="assets-tab" data-t="holdings" class="${ui.assetsTab === 'accounts' ? '' : 'on'}">👛 보유자산</button>
-    <button type="button" data-action="assets-tab" data-t="accounts" class="${ui.assetsTab === 'accounts' ? 'on' : ''}">🏦 계좌</button>
+    <button type="button" data-action="assets-tab" data-t="holdings" class="${t === 'holdings' ? 'on' : ''}">👛 보유자산</button>
+    <button type="button" data-action="assets-tab" data-t="portfolio" class="${t === 'portfolio' ? 'on' : ''}">📊 투자 포트폴리오</button>
+    <button type="button" data-action="assets-tab" data-t="accounts" class="${t === 'accounts' ? 'on' : ''}">🏦 계좌 관리</button>
   </div>`;
-  if (ui.assetsTab === 'accounts') return seg + viewAccountsTab();
+  if (t === 'accounts') return seg + viewAccountsTab();
+  if (t === 'portfolio') return seg + viewPortfolioTab();
   return seg + viewHoldingsTab();
 }
+/* ui.portfolioScope에 저장된 값 방어 — 선택했던 개별 계좌가 사라졌다면(이론상 불가하지만 방어적으로) 전체로 되돌림 */
+function resolvePortfolioScope() {
+  const raw = ui.portfolioScope || { kind: 'group', key: 'all' };
+  if (raw.kind === 'account' && !S.accounts.find(a => a.id === raw.id)) return { kind: 'group', key: 'all' };
+  return raw;
+}
+/* "분석 대상" 드롭다운(요구사항 #4~#6) — 계좌 유형별 선택 optgroup + 개별 계좌 선택 optgroup */
+function portfolioScopeSelectHtml(scope) {
+  const groupOpts = PORTFOLIO_SCOPE_GROUPS.map(g => `<option value="group:${g.key}" ${scope.kind === 'group' && scope.key === g.key ? 'selected' : ''}>${esc(g.label)}</option>`).join('');
+  const acctList = S.accounts.slice().sort((a, b) => (a.institution + a.alias).localeCompare(b.institution + b.alias));
+  const acctOpts = acctList.map(a => `<option value="account:${a.id}" ${scope.kind === 'account' && scope.id === a.id ? 'selected' : ''}>${esc(a.institution)} · ${esc(a.alias)}</option>`).join('');
+  return `<label class="field" style="margin:0 0 14px"><span>분석 대상</span>
+    <select class="input" id="portfolioScopeSel">
+      <optgroup label="계좌 유형별 선택">${groupOpts}</optgroup>
+      ${acctList.length ? `<optgroup label="개별 계좌 선택">${acctOpts}</optgroup>` : ''}
+    </select>
+  </label>`;
+}
+/* 개별 계좌 선택 시 상단 헤더 카드(요구사항 #9) — "계좌 목적"은 계좌 모델에 별도 필드가 없어 대분류(cls)로 해석함(보고서에 명시) */
+function portfolioAccountHeaderCard(acc) {
+  const isDb = isDbPensionAccount(acc);
+  const value = isDb ? acc.dbValuation : accountSummary(acc).value;
+  const rows = [
+    ['평가액', won(value)],
+    ['계좌 유형', esc(acc.type) || '-'],
+    ['금융기관', esc(acc.institution) || '-'],
+    ['계좌 목적', esc(acc.cls)],
+    ['계좌 상태', esc(acc.status)],
+    ['기본 통화', curLabel(acc.currency)],
+  ];
+  return `<div class="card tape" style="margin-bottom:14px">
+    <h3 style="margin:0 0 4px">🏦 ${esc(acc.institution)} · ${esc(acc.alias)}</h3>
+    ${rows.map(([k, v]) => `<div class="sumline"><span class="small muted">${k}</span><span class="num">${v}</span></div>`).join('')}
+  </div>`;
+}
+/* 스코프에 포함된 DB형 퇴직연금 요약 카드(요구사항 #10, G) — dbIncludeAnalysis와 무관하게 스코프에 있으면 항상 노출 */
+function portfolioDbSummaryCard(dbAccounts) {
+  if (!dbAccounts.length) return '';
+  const lines = dbAccounts.map(acc => {
+    const expected = acc.dbExpected ? ` · 예상 퇴직금 ${won(acc.dbExpected)}` : '';
+    return `<p class="small muted" style="margin:0 0 4px">🏛️ ${esc(acc.alias)} · 기준일 ${esc(acc.dbAsOf || '-')} · 평가액 ${won(acc.dbValuation)}${expected}</p>`;
+  }).join('');
+  return `<div class="card tape" style="margin-bottom:14px">
+    ${lines}
+    <p class="small faint" style="margin:6px 0 0">DB형 퇴직연금은 종목·국가·섹터 분석에 포함되지 않고, 평가액만 여기 표시돼요.</p>
+  </div>`;
+}
+/* 투자 포트폴리오 탭(요구사항 #3~#12) — 자산군/국가·지역/섹터/종목 4개 분석 축 + 상단 "분석 대상" 드롭다운으로 범위를 좁히는 방식.
+ * 예전의 6개 칩(주식·ETF/연금·퇴직연금/원자재/암호화폐/계좌)은 전부 없어지고, 그 다양성은 드롭다운 스코프로 대체됨.
+ * 부동산은 전혀 포함하지 않고, '기타'는 자산 등록폼의 토글로 opt-in한 것만 포함(portfolioAssets() 참고). */
+function viewPortfolioTab() {
+  const head = `<div class="card tape" style="margin-bottom:14px">
+    <h3 style="margin:0 0 4px">📊 투자 포트폴리오</h3>
+    <p class="small muted" style="margin:0">주식·채권·연금·원자재·암호화폐 등 투자 목적 자산의 통합 구성입니다.</p>
+  </div>`;
+  const scope = resolvePortfolioScope();
+  const selectHtml = portfolioScopeSelectHtml(scope);
+  // 계좌 유형을 선택했는데 그 유형에 등록된 계좌가 하나도 없으면(요구사항 #11) 빈 상태 + 계좌 추가 버튼만 보여줌
+  if (scope.kind === 'group' && scope.key !== 'all' && !portfolioScopeAccounts(scope).length && !portfolioScopeDbAccounts(scope).length) {
+    return head + selectHtml
+      + `<div class="card tape empty"><span class="big-emo emo">🏦</span><b>등록된 계좌가 없습니다</b>이 유형의 계좌를 먼저 등록해 주세요.</div>`
+      + `<button class="btn block primary" data-action="account-add">➕ 계좌 추가</button>`;
+  }
+  const selectedAccount = scope.kind === 'account' ? S.accounts.find(a => a.id === scope.id) : null;
+  const headerCard = selectedAccount ? portfolioAccountHeaderCard(selectedAccount) : '';
+  const dbAccounts = portfolioScopeDbAccounts(scope);
+  const dbCard = portfolioDbSummaryCard(dbAccounts);
+  // 개별 DB형 퇴직연금 계좌를 선택했으면 분석할 종목이 없으므로 헤더+요약 카드만(요구사항 G)
+  if (selectedAccount && isDbPensionAccount(selectedAccount)) {
+    return head + selectHtml + headerCard + dbCard;
+  }
+  const list = scopedPortfolioAssets(scope);
+  const tabKey = ui.portfolioTabKey || 'class';
+  const seg = `<div class="seg" style="margin:0 0 14px">${PORTFOLIO_TABS.map(t => `<button type="button" data-action="portfolio-tab" data-k="${t.key}" class="${t.key === tabKey ? 'on' : ''}">${E(t.emo)} ${esc(t.label)}</button>`).join('')}</div>`;
+  let body;
+  if (tabKey === 'class') {
+    const rows = portfolioAssetClassRows(list, dbAccounts);
+    const total = rows.reduce((s, r) => s + r.value, 0);
+    body = total > 0
+      ? groupDonut(rows.map(r => ({ ...r, color: ASSET_CLASS_COLOR[r.label] })), '🧭')
+      : `<p class="small muted" style="margin:10px 4px">아직 투자 포트폴리오에 포함된 자산이 없어요.</p>`;
+  } else if (tabKey === 'country' || tabKey === 'sector') {
+    // 국가·지역/섹터는 주식형 자산에서만 의미가 있어 이 두 탭만 주식·주식형 연금으로 범위를 좁힘(요구사항 E)
+    const equityList = list.filter(a => a.cat === '국내주식' || a.cat === '해외주식' || (a.cat === '연금·IRP' && a.penClass === '주식형'));
+    const tabDef = tabKey === 'country'
+      ? { key: 'country', label: '국가·지역', dim: '국가', emo: '🌍', group: a => (a.cat === '연금·IRP' ? a.penCountry : a.country) || null }
+      : { key: 'sector', label: '섹터', dim: '섹터', emo: '🏷️', group: a => (a.cat === '연금·IRP' ? a.penSector : a.sector) || null };
+    body = compositionBlock(equityList, [tabDef], tabDef.key);
+  } else if (tabKey === 'item') {
+    // 종목 탭은 스코프 전체(주식·연금·채권·현금·원자재·암호화폐·기타)를 대상으로 함(요구사항 F)
+    body = compositionBlock(list, [{ key: 'item', label: '종목', dim: '종목', emo: '💼', group: itemGroupKey }], 'item');
+  }
+  return head + selectHtml + headerCard + dbCard + seg + body;
+}
 function viewHoldingsTab() {
-  const dbAnalysisAccounts = dbPensionAccounts().filter(a => a.dbIncludeAnalysis);
-  if (!S.assets.length && !dbAnalysisAccounts.length) return `<div class="card tape empty"><span class="big-emo emo">👛</span><b>보물함이 텅 비었어요</b>오른쪽 아래 ✏️ 버튼으로 예금, 주식, 연금, 부동산, 코인을 넣어 주세요.</div>`;
+  if (!S.assets.length) return `<div class="card tape empty"><span class="big-emo emo">👛</span><b>보물함이 텅 비었어요</b>오른쪽 아래 ✏️ 버튼으로 예금, 주식, 연금, 부동산, 코인을 넣어 주세요.</div>`;
   const T = totals();
   const capBtn = `<button class="btn block capture-btn" data-action="capture">📷 증권앱 캡처로 시세 반영하기</button>`;
-  const cats = CATS.filter(c => S.assets.some(a => a.cat === c) || (c === '연금·IRP' && dbAnalysisAccounts.length));
+  const cats = CATS.filter(c => S.assets.some(a => a.cat === c));
+  // 자산군별 구성 분석(국내주식·해외주식·연금·IRP·암호화폐)은 이제 "투자 포트폴리오" 탭으로 통합됨 — 여기는 순수 보유 목록만(요구사항 #3)
   return asOfLine() + capBtn + savingsCard(false) + cats.map(c => {
     const list = S.assets.filter(a => a.cat === c).sort((a, b) => valueOf(b) - valueOf(a));
-    const compList = c === '연금·IRP' ? list.concat(dbAnalysisAccounts.map(dbPensionSyntheticRow)) : list;
     return `<div class="group-head"><span>${E(CAT_EMO[c])} ${c}</span><span class="num">${won(T.byCat[c])}</span></div>
-    ${list.length ? `<div class="list">${renderHoldingsList(list)}</div>` : ''}
-    ${compositionAccordion(c, compList)}`;
+    <div class="list">${renderHoldingsList(list)}</div>`;
   }).join('') + `<p class="hand faint" style="margin:12px 6px">콕 누르면 고칠 수 있어요 · 오르면 빨강(▲), 내리면 파랑(▼)</p>`;
 }
 /* 동일 종목을 여러 계좌에서 보유할 때(요구사항 #12) — 종목명(또는 티커)+자산군이 같으면 한 그룹으로 묶어 합산 요약을 보여주고,
@@ -2093,6 +2257,8 @@ function assetForm(a, draftOverride) {
       </div>
       <p class="hint">ETF·TDF·펀드처럼 기초자산의 국가·섹터를 정확히 나누기 어려운 상품은 '상품유형'만 골라도 괜찮아요. 이름에 TDF·ETF 등이 있으면 상품유형을 추정해서 자동으로 채워드려요(추정 표시가 붙어요) — 정확한 값을 알면 직접 골라 주세요. 국가는 상장국이 아니라 기초자산의 주요 투자대상 국가 기준이에요.</p>
     </div>
+    <label class="field" id="commodityWrap" ${a.cat === '원자재' ? '' : 'hidden'}><span>원자재 종류</span><select class="input" id="f_commodity">${opts(COMMODITY_TYPES, a.commodityType)}</select></label>
+    <label class="check" id="otherPortfolioWrap" ${a.cat === '기타' ? '' : 'hidden'}><input type="checkbox" id="f_portfolio" ${a.portfolioInclude ? 'checked' : ''}> <span>📊 투자 포트폴리오 분석에 포함 — 기본은 제외, 투자 목적 자산이면 켜주세요</span></label>
     <div class="field"><span>구성 (선택) — 예: 연금계좌 안의 S&P500 60%, 나스닥 40%</span>
       <div id="compList">${a.components.map(compRow).join('')}</div>
       <button type="button" class="btn sm" id="addComp">🧺 구성 추가</button>
@@ -2132,6 +2298,8 @@ function assetForm(a, draftOverride) {
       penSector: catVal === '연금·IRP' ? (val('f_pensector') || '') : '',
       penProduct: catVal === '연금·IRP' ? (val('f_penproduct') || '') : '',
       penProductEstimated: false,
+      commodityType: isGold ? (val('f_commodity') || '') : '',
+      portfolioInclude: catVal === '기타' ? !!$sheetBody.querySelector('#f_portfolio')?.checked : false,
       accountId: accVal || ''
     });
     if (catVal === '연금·IRP') {
@@ -2285,6 +2453,10 @@ function syncGoldUI() {
   const penWrap = $sheetBody.querySelector('#pensionWrap');
   if (penWrap) penWrap.hidden = !isPension;
   if (isPension) autoFillPensionProduct();
+  const commodityWrap = $sheetBody.querySelector('#commodityWrap');
+  if (commodityWrap) commodityWrap.hidden = !isGold;
+  const otherPortfolioWrap = $sheetBody.querySelector('#otherPortfolioWrap');
+  if (otherPortfolioWrap) otherPortfolioWrap.hidden = cat !== '기타';
 }
 /* 이름·티커가 바뀔 때마다 섹터·국가 자동 매칭을 시도함 — 사용자가 이미 직접 고른 값은 덮어쓰지 않음 */
 function autoFillSectorCountry() {
@@ -2955,8 +3127,7 @@ document.addEventListener('click', e => {
       S.settings.targets = next; ui.gapRelative = false; save(); render(); toast('목표 비중을 보유 자산 기준으로 바꿨어요 🎯'); break;
     }
     case 'gap-relative': ui.gapRelative = !ui.gapRelative; render(); break;
-    case 'comp-toggle': ui.compOpen[el.dataset.cat] = !ui.compOpen[el.dataset.cat]; render(); break;
-    case 'comp-tab': ui.compTab[el.dataset.cat] = el.dataset.k; render(); break;
+    case 'portfolio-tab': ui.portfolioTabKey = el.dataset.k; render(); break;
     case 'theme': S.settings.theme = el.dataset.v; save(); render(); break;
     case 'save-api': S.settings.twelveKey = document.getElementById('twelveKey').value.trim(); S.settings.fxManual = num(document.getElementById('fxManual').value); S.settings.claudeKey = document.getElementById('claudeKey').value.trim(); S.settings.claudeModel = document.getElementById('claudeModel').value.trim() || DEFAULT_MODEL; save(); render(); toast('저장했어요 ✨'); break;
     case 'export': exportBackup(); break;
@@ -2977,6 +3148,7 @@ $app.addEventListener('change', e => {
   else if (t.hasAttribute('data-band')) { S.settings.band = Math.max(0, num(t.value)); save(); render(); }
   else if (t.hasAttribute('data-targetreturn')) { S.settings.targetReturnRate = Math.max(0, num(t.value)); save(); render(); }
   else if (t.hasAttribute('data-extra')) { ui.extra = num(t.value); render(); }
+  else if (t.id === 'portfolioScopeSel') { const [kind, val] = t.value.split(':'); ui.portfolioScope = kind === 'account' ? { kind: 'account', id: val } : { kind: 'group', key: val }; render(); }
 });
 $app.addEventListener('keydown', e => { if (e.key === 'Enter' && e.target.matches('input')) e.target.blur(); });
 // 숫자 입력 칸: 포커스 해제 시 천단위 구분기호
