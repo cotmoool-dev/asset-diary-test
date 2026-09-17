@@ -132,6 +132,58 @@ function rememberStockMeta(name, symbol, sector, country) {
   S.settings.stockMeta = S.settings.stockMeta || {};
   S.settings.stockMeta[key] = { sector: sector || '', country: country || '' };
 }
+/* ───────── 연금·IRP 구성 분석용 상수 ─────────
+ * ETF·TDF·펀드 등은 기초자산의 국가·섹터를 신뢰성 있게 나누기 어려워 '상품유형별' 탭을 별도로 둠(요구사항 #7).
+ * 국가 비중은 상장국이 아니라 기초자산·주요 투자대상 국가 기준(요구사항 #8) — 화면에도 그 기준을 짧게 안내함. */
+const PENSION_CLASS = ['주식형', '채권·안전자산', '현금성 자산', '대체자산'];
+const PENSION_COUNTRIES = ['미국', '한국', '선진국', '신흥국', '기타'];
+const PENSION_SECTORS = ['정보기술', '금융', '헬스케어', '산업재', '기타'];
+const PENSION_PRODUCT_TYPES = ['미국주식 ETF', '국내주식 ETF', '글로벌 채권 ETF', 'TDF', '대기자금'];
+/* 이름에 자주 나오는 키워드로 상품유형을 추정 — 근거가 없으면 절대 임의로 정하지 않고 null(→ '미분류') */
+function guessPensionProduct(name) {
+  const n = String(name || '').toUpperCase();
+  if (!n) return null;
+  if (n.includes('TDF')) return 'TDF';
+  if (n.includes('MMF') || n.includes('대기') || n.includes('파킹')) return '대기자금';
+  const isEtf = n.includes('ETF');
+  if (n.includes('채권') || n.includes('BOND') || n.includes('AGG') || n.includes('BND')) {
+    if (n.includes('글로벌') || n.includes('GLOBAL') || n.includes('AGG') || n.includes('BND')) return '글로벌 채권 ETF';
+  }
+  if (isEtf) {
+    if (n.includes('S&P') || n.includes('SP500') || n.includes('나스닥') || n.includes('NASDAQ') || n.includes('미국')) return '미국주식 ETF';
+    if (n.includes('KOSPI') || n.includes('코스피') || n.includes('국내')) return '국내주식 ETF';
+  }
+  return null;
+}
+/* 분류(라벨)마다 항상 같은 색을 쓰기 위한 고정 매핑 — 여기 없는 라벨(기타 국가·섹터 등)은 SUBCHART_COLORS를 순서대로 돌려씀(요구사항 #10) */
+const COMP_LABEL_COLOR = {
+  '미국': '#2f6fed',           // 블루
+  '한국': '#e2572b',           // 레드·오렌지
+  '채권·안전자산': '#5b6b82',  // 네이비·그레이
+  '현금성 자산': '#3fae6a',    // 그린
+  '미분류': '#9aa3af',         // 그레이
+  '기타': '#c9ced6',           // 연한 그레이
+};
+/* 자산군별 구성 분석 탭 설정 — 배열의 첫 항목이 기본 선택 탭(요구사항 #5) */
+const COMP_TABS = {
+  '국내주식': [
+    { key: 'sector', label: '섹터별', dim: '섹터', emo: '🏷️', group: a => a.sector || null },
+    { key: 'country', label: '국가별', dim: '국가', emo: '🌍', group: a => a.country || null },
+  ],
+  '해외주식': [
+    { key: 'country', label: '국가별', dim: '국가', emo: '🌍', group: a => a.country || null },
+    { key: 'sector', label: '섹터별', dim: '섹터', emo: '🏷️', group: a => a.sector || null },
+  ],
+  '연금·IRP': [
+    { key: 'class', label: '자산군별', dim: '자산군', emo: '🧺', group: a => a.penClass || null },
+    { key: 'country', label: '국가별', dim: '국가', emo: '🌍', group: a => a.penCountry || null },
+    { key: 'sector', label: '섹터별', dim: '섹터', emo: '🏷️', group: a => a.penSector || null },
+    { key: 'product', label: '상품유형별', dim: '상품유형', emo: '🧩', group: a => a.penProduct || null },
+  ],
+  '암호화폐': [
+    { key: 'name', label: '종목별', dim: '종목', emo: '🪙', group: a => a.name || null },
+  ],
+};
 const TX_TYPES = { buy: '매수', sell: '매도', div: '배당' };
 const TITLES = { home: '자산 일기', assets: '내 보물함', book: '가계부', tx: '거래 일기', rebal: '균형 맞추기', settings: '설정' };
 const BOOK = {
@@ -151,8 +203,6 @@ const DEFAULT_MODEL = 'claude-sonnet-5';
 /* 목표 유형(목적 태그)별 기본 아이콘 — 새 목표를 만들 때 이 기본값이 먼저 선택되고, 목표 화면에서 다른 아이콘으로 바꿀 수 있어요 */
 const GOAL_DEFAULT_ICON = { '주거자금': '🏠', '사업자금': '💼', '연금': '🌱', '비상금': '☂️', '기타': '🎯' };
 const GOAL_ICONS = ['🏠', '🌱', '☂️', '🎯', '💼', '🎓', '✈️', '🚗', '💍', '👶', '🐾', '🎁'];
-/* v5(금융대시보드판) 백업을 가져와도 목표 아이콘이 유지되도록, v5의 아이콘 이름을 이모지로 되돌리는 표 */
-const GOAL_ICON_FROM_NAME = { home: '🏠', sprout: '🌱', umbrella: '☂️', target: '🎯', briefcase: '💼', graduation: '🎓', plane: '✈️', car: '🚗', heart: '💍', users: '👶', flag: '🐾', gift: '🎁' };
 function goalIcon(g) { return (g && g.icon) || GOAL_DEFAULT_ICON[g && g.purpose] || '🎯'; }
 /* ───────── 상태 ───────── */
 function defaultState() {
@@ -183,7 +233,7 @@ function defaultState() {
 }
 
 let S = load();
-let ui = { tab: 'home', txFilter: 'all', open: {}, tradeHist: {}, rebalMode: 'add', extra: 0, bookMonth: '', perfPeriod: 'month', gapRelative: false, subChartView: {}, returnGuideOpen: false };
+let ui = { tab: 'home', txFilter: 'all', open: {}, tradeHist: {}, rebalMode: 'add', extra: 0, bookMonth: '', perfPeriod: 'month', gapRelative: false, compOpen: {}, compTab: {}, returnGuideOpen: false };
 
 function load() {
   try {
@@ -236,7 +286,7 @@ function normGoal(g) {
     id: g.id || uid(),
     name: g.name || '목표',
     purpose: PURPOSES.includes(g.purpose) ? g.purpose : '기타',
-    icon: GOAL_ICONS.includes(g.icon) ? g.icon : (GOAL_ICON_FROM_NAME[g.icon] || ''),
+    icon: GOAL_ICONS.includes(g.icon) ? g.icon : '',
     cats: Array.isArray(g.cats) ? g.cats.filter(c => CATS.includes(c)) : [],
     date: g.date || '',
     amount: num(g.amount),
@@ -271,6 +321,11 @@ function normAsset(a) {
     fxExposure: ['exposed', 'hedged'].includes(a.fxExposure) ? a.fxExposure : '',
     sector: SECTORS.includes(a.sector) ? a.sector : '',
     country: COUNTRIES.includes(a.country) ? a.country : '',
+    penClass: PENSION_CLASS.includes(a.penClass) ? a.penClass : '',
+    penCountry: PENSION_COUNTRIES.includes(a.penCountry) ? a.penCountry : '',
+    penSector: PENSION_SECTORS.includes(a.penSector) ? a.penSector : '',
+    penProduct: PENSION_PRODUCT_TYPES.includes(a.penProduct) ? a.penProduct : '',
+    penProductEstimated: !!a.penProductEstimated && PENSION_PRODUCT_TYPES.includes(a.penProduct),
     components: Array.isArray(a.components) ? a.components.map(c => ({ name: c.name || '', pct: num(c.pct) })) : [],
     memo: a.memo || '',
     dep: normDep(a.dep)
@@ -675,22 +730,66 @@ function groupDonut(rows, centerEmo) {
     `<div><i style="background:${r.color || SUBCHART_COLORS[i % SUBCHART_COLORS.length]}"></i><span>${esc(r.label)}</span><b class="num">${pct(total > 0 ? r.value / total * 100 : 0)}</b></div>`).join('');
   return `<div class="donut-wrap"><svg class="donut" style="width:132px;height:132px" viewBox="0 0 132 132" role="img"><circle r="${R}" cx="66" cy="66" fill="none" stroke="var(--card2)" stroke-width="19"/>${segs}<text x="66" y="74" text-anchor="middle" font-size="24">${centerEmo}</text></svg><div class="legend">${legend}</div></div>`;
 }
-/* 국내주식·해외주식 섹션 아래에 붙는 "섹터별 보기 / 국가별 보기" 토글 + 도넛. 섹터·국가 정보가 없는 종목은 "미분류"로 묶고, 이름을 눌러 바로 등록 화면으로 연결함 */
-function sectorCountrySection(cat, list) {
-  const view = ui.subChartView[cat] === 'country' ? 'country' : 'sector';
-  const key = view === 'sector' ? 'sector' : 'country';
+/* 같은 라벨엔 항상 같은 색을 쓰기 위한 색상 결정 — 고정 매핑 우선, 없으면 SUBCHART_COLORS를 순서대로(요구사항 #10) */
+function compColor(label, idx) { return COMP_LABEL_COLOR[label] || SUBCHART_COLORS[idx % SUBCHART_COLORS.length]; }
+/* 구성 분석용 그룹핑 + 임계치 로직(요구사항 #3·#4).
+ * groupKeyFn(asset)이 falsy를 반환하면 '미분류'로 따로 모으고(도넛에 합쳐 넣지 않고 별도 행+안내문으로), 나머지는 값 기준으로 묶는다.
+ * 보유 종목 수(list.length) 기준: 1개면 도넛 없이 요약 문장(mode:'single'), 2~4개면 전체 그룹을 도넛으로, 5개 이상이면 상위 5개 그룹 + '기타'로 묶는다. */
+function buildCompositionRows(list, groupKeyFn) {
   const groups = {};
-  list.forEach(a => { const k = a[key] || '미분류'; groups[k] = (groups[k] || 0) + valueOf(a); });
-  const rows = Object.entries(groups).sort((a, b) => b[1] - a[1]).map(([label, value]) => ({ label, value, color: label === '미분류' ? 'var(--line)' : undefined }));
-  const unclassified = list.filter(a => !a[key]);
-  return `<div class="subchart" style="margin:6px 0 14px">
-    <div class="seg" style="margin:0 0 8px">
-      <button type="button" data-action="subchart-view" data-cat="${cat}" data-v="sector" class="${view === 'sector' ? 'on' : ''}">🏷️ 섹터별 보기</button>
-      <button type="button" data-action="subchart-view" data-cat="${cat}" data-v="country" class="${view === 'country' ? 'on' : ''}">🌍 국가별 보기</button>
-    </div>
-    ${groupDonut(rows, view === 'sector' ? '🏷️' : '🌍')}
-    ${unclassified.length ? `<p class="small faint" style="margin:8px 2px 0">🌱 미분류 종목 ${unclassified.length}개는 ${view === 'sector' ? '섹터' : '국가'} 정보가 없어요 — 눌러서 채워주세요: ${unclassified.map(a => `<button type="button" class="link-btn" style="font-size:12.5px" data-action="edit-asset" data-id="${a.id}">${esc(a.name)}</button>`).join(', ')}</p>` : ''}
-  </div>`;
+  const unclassifiedAssets = [];
+  list.forEach(a => {
+    const k = groupKeyFn(a);
+    if (!k) unclassifiedAssets.push(a);
+    else groups[k] = (groups[k] || 0) + valueOf(a);
+  });
+  if (list.length === 1) {
+    const only = list[0];
+    const k = groupKeyFn(only);
+    return { mode: 'single', label: k || '미분류', asset: only, unclassifiedAssets };
+  }
+  let rows = Object.entries(groups).sort((a, b) => b[1] - a[1]).map(([label, value]) => ({ label, value }));
+  if (list.length >= 5 && rows.length > 5) {
+    const top = rows.slice(0, 5);
+    const restSum = rows.slice(5).reduce((s, r) => s + r.value, 0);
+    rows = restSum > 0 ? [...top, { label: '기타', value: restSum }] : top;
+  }
+  if (unclassifiedAssets.length) rows.push({ label: '미분류', value: unclassifiedAssets.reduce((s, a) => s + valueOf(a), 0) });
+  return { mode: 'donut', rows, unclassifiedAssets };
+}
+/* 연금·IRP 상품유형 탭에서, 이름으로 '추정'한 값이 섞여있으면 어떤 상품유형에 추정치가 포함됐는지 짧게 안내(요구사항 #7) */
+function pensionEstimatedNote(list) {
+  const est = new Set();
+  list.forEach(a => { if (a.penProductEstimated && a.penProduct) est.add(a.penProduct); });
+  if (!est.size) return '';
+  return `<p class="small faint" style="margin:6px 2px 0">🔍 ${[...est].map(esc).join(', ')}은(는) 종목명으로 추정한 값이 포함돼 있어요(추정)</p>`;
+}
+/* 자산군 카드 아래 '구성 분석 보기' 아코디언 — 접혀있을 땐 버튼만, 펼치면 탭(있으면) + 도넛 또는 요약 문장 + 미분류 안내 + (국가 탭이면) 산정 기준 문구를 보여줌 */
+function compositionAccordion(cat, list) {
+  const tabs = COMP_TABS[cat];
+  if (!tabs || !tabs.length || !list.length) return '';
+  const open = !!ui.compOpen[cat];
+  const toggleBtn = `<button type="button" class="btn block comp-toggle" data-action="comp-toggle" data-cat="${cat}" aria-expanded="${open}">${open ? '구성 분석 접기 ▲' : '구성 분석 보기 ▼'}</button>`;
+  if (!open) return toggleBtn;
+  const tabKey = ui.compTab[cat] || tabs[0].key;
+  const tab = tabs.find(t => t.key === tabKey) || tabs[0];
+  const result = buildCompositionRows(list, tab.group);
+  const tabSwitcher = tabs.length > 1 ? `<div class="seg" style="margin:0 0 10px">${tabs.map(t => `<button type="button" data-action="comp-tab" data-cat="${cat}" data-k="${t.key}" class="${t.key === tab.key ? 'on' : ''}">${esc(t.label)}</button>`).join('')}</div>` : '';
+  let body;
+  if (result.mode === 'single') {
+    const est = cat === '연금·IRP' && tab.key === 'product' && result.asset.penProductEstimated ? ' (추정)' : '';
+    body = `<p class="small muted" style="margin:4px 2px 2px">${tab.dim}: ${esc(result.label)}${est} ${pct(100)}</p>
+      <p class="small faint" style="margin:2px 2px 10px">종목이 2개 이상이면 구성 차트가 표시됩니다.</p>`;
+  } else {
+    const rows = result.rows.map((r, i) => ({ label: r.label, value: r.value, color: compColor(r.label, i) }));
+    body = groupDonut(rows, tab.emo);
+  }
+  const unclassNote = result.unclassifiedAssets.length
+    ? `<p class="small faint" style="margin:8px 2px 0">🌱 미분류 ${result.unclassifiedAssets.length}건 · ${won(result.unclassifiedAssets.reduce((s, a) => s + valueOf(a), 0))} — 눌러서 채워주세요: ${result.unclassifiedAssets.map(a => `<button type="button" class="link-btn" style="font-size:12.5px" data-action="edit-asset" data-id="${a.id}">${esc(a.name)}</button>`).join(', ')}</p>`
+    : '';
+  const countryFootnote = tab.key === 'country' ? `<p class="small faint" style="margin:6px 2px 0">🌍 국가 비중은 기초자산의 주요 투자국 기준입니다.</p>` : '';
+  const estimatedNote = (cat === '연금·IRP' && tab.key === 'product') ? pensionEstimatedNote(list) : '';
+  return `${toggleBtn}<div class="subchart" style="margin:10px 0 14px">${tabSwitcher}${body}${unclassNote}${countryFootnote}${estimatedNote}</div>`;
 }
 
 /* 보유 자산이 아예 없는 분류는 "부족"으로 겁주지 않고 'empty'(미보유)로 따로 분리해서 표시함.
@@ -768,10 +867,9 @@ function viewAssets() {
   const capBtn = `<button class="btn block capture-btn" data-action="capture">📷 증권앱 캡처로 시세 반영하기</button>`;
   return asOfLine() + capBtn + savingsCard(false) + CATS.filter(c => S.assets.some(a => a.cat === c)).map(c => {
     const list = S.assets.filter(a => a.cat === c).sort((a, b) => valueOf(b) - valueOf(a));
-    const isStockCat = c === '국내주식' || c === '해외주식';
     return `<div class="group-head"><span>${E(CAT_EMO[c])} ${c}</span><span class="num">${won(T.byCat[c])}</span></div>
     <div class="list">${list.map(assetItem).join('')}</div>
-    ${isStockCat && list.length ? sectorCountrySection(c, list) : ''}`;
+    ${compositionAccordion(c, list)}`;
   }).join('') + `<p class="hand faint" style="margin:12px 6px">콕 누르면 고칠 수 있어요 · 오르면 빨강(▲), 내리면 파랑(▼)</p>`;
 }
 /* 기록 피로도 줄이기: 자동 시세·예적금이 아닌 "직접 입력" 자산만 전체 수정폼 없이 값 하나만 빠르게 고칠 수 있게 함 */
@@ -1719,6 +1817,18 @@ function assetForm(a) {
         <p class="hint">예적금은 평가금액·원금이 “지금까지 넣은 돈”으로 자동 계산돼요.</p>
       </div>
     </div>
+    <div class="field" id="pensionWrap" ${a.cat === '연금·IRP' ? '' : 'hidden'}>
+      <span>연금·IRP 구성 분류 (선택)</span>
+      <div class="row2">
+        <label class="field"><span>자산군</span><select class="input" id="f_penclass"><option value="">미분류</option>${opts(PENSION_CLASS, a.penClass)}</select></label>
+        <label class="field"><span>국가</span><select class="input" id="f_pencountry"><option value="">미분류</option>${opts(PENSION_COUNTRIES, a.penCountry)}</select></label>
+      </div>
+      <div class="row2">
+        <label class="field"><span>섹터</span><select class="input" id="f_pensector"><option value="">미분류</option>${opts(PENSION_SECTORS, a.penSector)}</select></label>
+        <label class="field"><span>상품유형${a.penProductEstimated ? ' <small class="faint">(추정)</small>' : ''}</span><select class="input" id="f_penproduct" data-auto="${a.penProductEstimated ? esc(a.penProduct) : ''}"><option value="">미분류</option>${opts(PENSION_PRODUCT_TYPES, a.penProduct)}</select></label>
+      </div>
+      <p class="hint">ETF·TDF·펀드처럼 기초자산의 국가·섹터를 정확히 나누기 어려운 상품은 '상품유형'만 골라도 괜찮아요. 이름에 TDF·ETF 등이 있으면 상품유형을 추정해서 자동으로 채워드려요(추정 표시가 붙어요) — 정확한 값을 알면 직접 골라 주세요. 국가는 상장국이 아니라 기초자산의 주요 투자대상 국가 기준이에요.</p>
+    </div>
     <div class="field"><span>구성 (선택) — 예: 연금계좌 안의 S&P500 60%, 나스닥 40%</span>
       <div id="compList">${a.components.map(compRow).join('')}</div>
       <button type="button" class="btn sm" id="addComp">🧺 구성 추가</button>
@@ -1748,8 +1858,17 @@ function assetForm(a) {
       isResidence: catVal === '부동산' && !!$sheetBody.querySelector('#f_residence')?.checked,
       fxExposure: catVal === '해외주식' ? (val('f_fxexp') || '') : '',
       sector: (catVal === '국내주식' || catVal === '해외주식') ? (val('f_sector') || '') : '',
-      country: (catVal === '국내주식' || catVal === '해외주식') ? (val('f_country') || '') : ''
+      country: (catVal === '국내주식' || catVal === '해외주식') ? (val('f_country') || '') : '',
+      penClass: catVal === '연금·IRP' ? (val('f_penclass') || '') : '',
+      penCountry: catVal === '연금·IRP' ? (val('f_pencountry') || '') : '',
+      penSector: catVal === '연금·IRP' ? (val('f_pensector') || '') : '',
+      penProduct: catVal === '연금·IRP' ? (val('f_penproduct') || '') : '',
+      penProductEstimated: false
     });
+    if (catVal === '연금·IRP') {
+      const penProductEl = $sheetBody.querySelector('#f_penproduct');
+      next.penProductEstimated = !!(penProductEl && next.penProduct && penProductEl.dataset.auto === next.penProduct && penProductEl.dataset.manual !== '1');
+    }
     if ((catVal === '국내주식' || catVal === '해외주식') && (next.sector || next.country)) rememberStockMeta(next.name, next.symbol, next.sector, next.country);
     if (mode === 'amount' && next.dep.kind !== 'none') {
       if (!next.dep.start || !next.dep.end || next.dep.end <= next.dep.start) { toast('가입일과 만기일을 확인해 주세요'); return false; }
@@ -1815,7 +1934,8 @@ function assetForm(a) {
     syncGoldUI();
   });
   $sheetBody.querySelector('#f_symbol').addEventListener('change', () => { if (val('f_src') === 'coingecko') fetchCoinNow(true); autoFillSectorCountry(); });
-  $sheetBody.querySelector('#f_name').addEventListener('change', autoFillSectorCountry);
+  $sheetBody.querySelector('#f_name').addEventListener('change', () => { autoFillSectorCountry(); autoFillPensionProduct(); });
+  $sheetBody.querySelector('#f_penproduct')?.addEventListener('change', e => { e.target.dataset.manual = '1'; });
   $sheetBody.querySelector('#f_priceFetch').addEventListener('click', () => fetchCoinNow(false));
   $sheetBody.querySelector('#f_priceManual').addEventListener('change', e => {
     $sheetBody.querySelector('#f_price').readOnly = val('f_src') === 'coingecko' && !e.target.checked;
@@ -1880,6 +2000,10 @@ function syncGoldUI() {
   if (scWrap) scWrap.hidden = !isStock;
   if (scHint) scHint.hidden = !isStock;
   if (isStock) autoFillSectorCountry();
+  const isPension = cat === '연금·IRP';
+  const penWrap = $sheetBody.querySelector('#pensionWrap');
+  if (penWrap) penWrap.hidden = !isPension;
+  if (isPension) autoFillPensionProduct();
 }
 /* 이름·티커가 바뀔 때마다 섹터·국가 자동 매칭을 시도함 — 사용자가 이미 직접 고른 값은 덮어쓰지 않음 */
 function autoFillSectorCountry() {
@@ -1890,6 +2014,15 @@ function autoFillSectorCountry() {
   if (!meta) return;
   if (meta.sector) sectorEl.value = meta.sector;
   if (meta.country) countryEl.value = meta.country;
+}
+/* 연금·IRP 상품명으로 상품유형을 추정해 '비어있을 때만' 채움 — 사용자가 이미 고른 값은 절대 덮어쓰지 않고, 채운 값은 data-auto에 남겨서 저장 시 '추정' 여부를 판단함 */
+function autoFillPensionProduct() {
+  const el = $sheetBody.querySelector('#f_penproduct');
+  if (!el || el.value) return;
+  const guess = guessPensionProduct(val('f_name'));
+  if (!guess) return;
+  el.value = guess;
+  el.dataset.auto = guess;
 }
 function symHint(src, cat) {
   if (cat === '원자재' && src === 'twelvedata') return '국제 금 시세(XAU/USD, 트로이온스당 달러)를 가져와 환율로 원/그램으로 환산해요. 무료 요금제에서는 상품(commodity) 시세가 안 나올 수 있어요 — 그럴 땐 "직접 입력"을 이용하세요.';
@@ -2433,7 +2566,8 @@ document.addEventListener('click', e => {
       S.settings.targets = next; ui.gapRelative = false; save(); render(); toast('목표 비중을 보유 자산 기준으로 바꿨어요 🎯'); break;
     }
     case 'gap-relative': ui.gapRelative = !ui.gapRelative; render(); break;
-    case 'subchart-view': ui.subChartView[el.dataset.cat] = el.dataset.v; render(); break;
+    case 'comp-toggle': ui.compOpen[el.dataset.cat] = !ui.compOpen[el.dataset.cat]; render(); break;
+    case 'comp-tab': ui.compTab[el.dataset.cat] = el.dataset.k; render(); break;
     case 'theme': S.settings.theme = el.dataset.v; save(); render(); break;
     case 'save-api': S.settings.twelveKey = document.getElementById('twelveKey').value.trim(); S.settings.fxManual = num(document.getElementById('fxManual').value); S.settings.claudeKey = document.getElementById('claudeKey').value.trim(); S.settings.claudeModel = document.getElementById('claudeModel').value.trim() || DEFAULT_MODEL; save(); render(); toast('저장했어요 ✨'); break;
     case 'export': exportBackup(); break;

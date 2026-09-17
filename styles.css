@@ -188,6 +188,7 @@ input[type=date].input::-webkit-date-and-time-value{text-align:left}
 .btn.block{width:100%;display:block;margin:8px 0}
 .btn.sm{padding:8px 13px;font-size:13.5px;border-radius:16px}
 .btn-row{display:flex;gap:8px;flex-wrap:wrap}
+.comp-toggle{background:var(--card2);font-size:14px;padding:10px 14px;margin:6px 0 14px;color:var(--accent-deep)}
 .link-btn{border:0;background:none;color:var(--accent-deep);font:400 16px var(--f-round);padding:6px 2px}
 .link-btn.strong{color:#fff;background:var(--accent);border-radius:16px;padding:7px 14px}
 .hint{font:700 15px/1.35 var(--f-hand);color:var(--ink3);margin:-6px 4px 14px}
@@ -314,7 +315,7 @@ details.more[open] summary::after{content:" ▴"}
 details.more[open] summary{margin-bottom:2px}
 .asof{opacity:.85}
 .gap-toggle{font-size:12px}
-.lock-screen{position:fixed;inset:0;z-index:999;background:var(--paper);display:flex;align-items:center;justify-content:center;padding:24px}
+.lock-screen{position:fixed;inset:0;z-index:999;background:var(--bg);display:flex;align-items:center;justify-content:center;padding:24px}
 .lock-card{width:100%;max-width:320px;background:var(--card);border-radius:24px;padding:28px 22px;box-shadow:0 8px 30px rgba(0,0,0,.15)}
 .lock-card .input{margin-top:4px}
 
