@@ -17,6 +17,7 @@ const DEFAULT_TAX_RATES = {
   '채권·안전자산': 0.015,
   '연금·IRP': 0,
   '부동산': 0,
+  '원자재': 0,              // 매도(현금화) 기준 근사. 실물(골드바 등) 인출 시 부가세 10%는 별도 — UI에 경고 문구로 안내
   '기타': 0
 };
 /* 목표 달성 시나리오 가정 연수익률(%). 실제 수익을 보장하지 않는 참고용 가정값. */
@@ -26,28 +27,133 @@ const SCENARIOS = [
   { key: 'agg', label: '공격', emo: '🐇', rate: 9 }
 ];
 const TX_REASONS = ['적립식 매수', '리밸런싱', '목표 달성', '손절', '차익실현', '이벤트 대응'];
-const CATS = ['현금·예금', '국내주식', '해외주식', '채권·안전자산', '연금·IRP', '부동산', '암호화폐', '기타'];
-const CAT_COLORS = ['#8fd3b0', '#ff9fb4', '#86c0f2', '#d3b58e', '#b79cf2', '#ffb07f', '#f7cf4d', '#c3c9d1'];
-const CAT_EMO = { '현금·예금': '🏦', '국내주식': '🍚', '해외주식': '🌏', '채권·안전자산': '🛡️', '연금·IRP': '🌱', '부동산': '🏠', '암호화폐': '🪙', '기타': '🎁' };
+const CATS = ['현금성자산', '국내주식', '해외주식', '채권·안전자산', '연금·IRP', '부동산', '암호화폐', '원자재', '기타'];
+const CAT_COLORS = ['#8fd3b0', '#ff9fb4', '#86c0f2', '#d3b58e', '#b79cf2', '#ffb07f', '#f7cf4d', '#e0c473', '#c3c9d1'];
+const CAT_EMO = { '현금성자산': '🏦', '국내주식': '🇰🇷', '해외주식': '🌏', '채권·안전자산': '🛡️', '연금·IRP': '🌱', '부동산': '🏠', '암호화폐': '🪙', '원자재': '🥇', '기타': '🎁' };
 const PURPOSE_EMO = { '주거자금': '🏡', '사업자금': '💼', '연금': '👵', '비상금': '☂️', '기타': '🎈' };
 const TX_EMO = { buy: '🛒', sell: '💸', div: '🍯' };
+
+/* ───────── 누적 수익률 상태 안내 (자산 신호등형) ─────────
+ * 판정은 returnStatusKey() 한 곳에서만 하고, 캐릭터 에셋·상태 문구·배지 색상·상세 설명은 RETURN_STATUS 설정 객체에서만 관리해요.
+ * 캐릭터 원래 색은 그대로 두고, 상태 의미는 배지의 배경·테두리·글자색(styles.css의 --rs-* 토큰, 다크 모드 값 따로 있음)으로만 구분해요. */
+const RETURN_STATUS = {
+  growth: {
+    label: '성장 흐름', range: '+5% 이상',
+    img: 'mood-growth.png', alt: '두 팔을 들고 축하하는 핑크 캐릭터',
+    tone: { bg: 'var(--rs-growth-bg)', fg: 'var(--rs-growth-fg)', line: 'var(--rs-growth-line)' },
+    desc: '누적 수익률이 +5% 이상입니다. 현재 포트폴리오가 긍정적인 성과 흐름을 보이고 있습니다. 다만 수익 확대에 따라 특정 자산의 비중이 목표 범위를 벗어나지 않았는지 확인해 보세요.',
+    points: '목표 자산배분, 자산별 비중 쏠림, 실현·미실현 수익'
+  },
+  stable: {
+    label: '안정 구간', range: '0% 이상 ~ +5% 미만',
+    img: 'mood-stable.png', alt: '눈을 감고 편안하게 웃는 피치색 캐릭터',
+    tone: { bg: 'var(--rs-stable-bg)', fg: 'var(--rs-stable-fg)', line: 'var(--rs-stable-line)' },
+    desc: '누적 수익률이 0% 이상, +5% 미만입니다. 자산은 플러스 흐름을 유지하고 있으나 시장 변동에 따라 결과가 달라질 수 있는 구간입니다.',
+    points: '목표 수익률과의 차이, 정기 투자 계획, 리밸런싱 필요 여부'
+  },
+  check: {
+    label: '점검 구간', range: '-5% 초과 ~ 0% 미만',
+    img: 'mood-check.png', alt: '손을 모으고 땀을 흘리며 고민하는 회청색 캐릭터',
+    tone: { bg: 'var(--rs-check-bg)', fg: 'var(--rs-check-fg)', line: 'var(--rs-check-line)' },
+    desc: '누적 수익률이 0% 미만, -5% 초과입니다. 단기 변동일 수 있으므로 성급한 대응보다 투자 기간, 매수 단가, 자산별 비중을 확인해 보세요.',
+    points: '시장 전반 하락 여부, 자산별 손실 원인, 투자 기간과 목표'
+  },
+  manage: {
+    label: '관리 필요', range: '-5% 이하',
+    img: 'mood-manage.png', alt: '눈물을 흘리며 스스로를 감싸 안는 블루 캐릭터',
+    tone: { bg: 'var(--rs-manage-bg)', fg: 'var(--rs-manage-fg)', line: 'var(--rs-manage-line)' },
+    desc: '누적 수익률이 -5% 이하입니다. 손실 자체보다 원인을 구분하는 것이 우선입니다. 시장 전반 하락인지, 특정 자산의 이슈인지, 목표 비중이 달라졌는지 점검해 보세요.',
+    points: '손실 기여 자산, 투자 가설의 유효성, 리밸런싱 또는 대응 기준'
+  }
+};
+const RETURN_STATUS_PENDING = { label: '수익률 산정 중', guide: '수익률 데이터가 준비되면 현재 구간 안내를 확인할 수 있습니다.' };
+/* 화면에 보이는 소수 둘째 자리 값으로 판정해서, "+5.00%"로 보이는데 "안정 구간"이 뜨는 식의 어긋남이 없게 함 */
+function roundReturnPct(pct) { return (typeof pct === 'number' && isFinite(pct)) ? Math.round(pct * 100) / 100 + 0 : null; }
+function returnStatusKey(pct) {
+  const p = roundReturnPct(pct);
+  if (p === null) return null;          // 데이터 없음 → 상태를 임의로 정하지 않음
+  if (p >= 5) return 'growth';          // +5.00% 포함
+  if (p >= 0) return 'stable';          // 0.00% 포함
+  if (p > -5) return 'check';           // -5.00%는 제외
+  return 'manage';                      // -5.00% 포함
+}
 const STATUS_EMO = { ok: '😊', low: '🥺', high: '😮', empty: '🌱' };
 const MOODS = ['😆', '🙂', '😐', '😟', '😭'];
 const PURPOSES = ['주거자금', '사업자금', '연금', '비상금', '기타'];
-const DEFAULT_TARGETS = { '현금·예금': 8, '국내주식': 20, '해외주식': 35, '채권·안전자산': 5, '연금·IRP': 15, '부동산': 10, '암호화폐': 7, '기타': 0 };
-const TX_TYPES = { buy: '매수', sell: '매도', div: '배당·이자' };
+/* 코인 이름 → CoinGecko ID 자동 매칭용 목록 (자주 쓰는 코인 위주, 목록에 없으면 ID를 직접 입력해도 됨) */
+const COINGECKO_COINS = [
+  ['bitcoin', '비트코인 (BTC)'], ['ethereum', '이더리움 (ETH)'], ['ripple', '리플 (XRP)'],
+  ['tether', '테더 (USDT)'], ['binancecoin', '바이낸스코인 (BNB)'], ['solana', '솔라나 (SOL)'],
+  ['usd-coin', '유에스디코인 (USDC)'], ['dogecoin', '도지코인 (DOGE)'], ['cardano', '에이다 (ADA)'],
+  ['tron', '트론 (TRX)'], ['avalanche-2', '아발란체 (AVAX)'], ['chainlink', '체인링크 (LINK)'],
+  ['polkadot', '폴카닷 (DOT)'], ['litecoin', '라이트코인 (LTC)'], ['sui', '수이 (SUI)'],
+  ['near', '니어 (NEAR)'], ['stellar', '스텔라루멘 (XLM)'], ['aptos', '앱토스 (APT)']
+];
+const DEFAULT_TARGETS = { '현금성자산': 8, '국내주식': 19, '해외주식': 32, '채권·안전자산': 5, '연금·IRP': 14, '부동산': 10, '암호화폐': 7, '원자재': 5, '기타': 0 };
+/* 국내주식·해외주식의 섹터·국가 구성 보기용. 섹터는 GICS(글로벌 산업 분류 기준) 11개 섹터를 우리말로 옮기고, 지수형·채권형 ETF처럼 한 섹터로 못 묶는 것들을 위한 항목을 더했어요(설정 화면에 이 기준을 안내해요). */
+const SECTORS = ['정보기술', '금융', '헬스케어', '산업재', '임의소비재', '필수소비재', '에너지', '소재', '유틸리티', '부동산', '통신서비스', '지수형 ETF(혼합)', '채권형 ETF', '기타'];
+const COUNTRIES = ['한국', '미국', '중국', '일본', '유럽', '신흥국', '글로벌(전세계)', '기타'];
+/* 잘 알려진 종목의 섹터·국가 기본값 — 종목명(한글) 또는 티커(영문 대문자)로 찾아요. 여기 없는 종목은 사용자가 고른 값을 기억해서 다음부터 자동으로 채워요(설정에 저장). */
+const STOCK_META = {
+  '삼성전자': { sector: '정보기술', country: '한국' }, 'SK하이닉스': { sector: '정보기술', country: '한국' },
+  '삼성바이오로직스': { sector: '헬스케어', country: '한국' }, 'LG에너지솔루션': { sector: '산업재', country: '한국' },
+  '현대차': { sector: '임의소비재', country: '한국' }, '기아': { sector: '임의소비재', country: '한국' },
+  'NAVER': { sector: '통신서비스', country: '한국' }, '네이버': { sector: '통신서비스', country: '한국' },
+  '카카오': { sector: '통신서비스', country: '한국' }, 'POSCO홀딩스': { sector: '소재', country: '한국' },
+  'KB금융': { sector: '금융', country: '한국' }, '신한지주': { sector: '금융', country: '한국' },
+  '삼성SDI': { sector: '산업재', country: '한국' }, '셀트리온': { sector: '헬스케어', country: '한국' },
+  'VOO': { sector: '지수형 ETF(혼합)', country: '미국' }, 'SPY': { sector: '지수형 ETF(혼합)', country: '미국' },
+  'IVV': { sector: '지수형 ETF(혼합)', country: '미국' }, 'QQQ': { sector: '지수형 ETF(혼합)', country: '미국' },
+  'VTI': { sector: '지수형 ETF(혼합)', country: '미국' }, 'VT': { sector: '지수형 ETF(혼합)', country: '글로벌(전세계)' },
+  'SCHD': { sector: '지수형 ETF(혼합)', country: '미국' }, 'AGG': { sector: '채권형 ETF', country: '미국' },
+  'BND': { sector: '채권형 ETF', country: '미국' }, 'TLT': { sector: '채권형 ETF', country: '미국' },
+  'AAPL': { sector: '정보기술', country: '미국' }, '애플': { sector: '정보기술', country: '미국' },
+  'MSFT': { sector: '정보기술', country: '미국' }, '마이크로소프트': { sector: '정보기술', country: '미국' },
+  'GOOGL': { sector: '통신서비스', country: '미국' }, 'GOOG': { sector: '통신서비스', country: '미국' },
+  'AMZN': { sector: '임의소비재', country: '미국' }, '아마존': { sector: '임의소비재', country: '미국' },
+  'NVDA': { sector: '정보기술', country: '미국' }, '엔비디아': { sector: '정보기술', country: '미국' },
+  'TSLA': { sector: '임의소비재', country: '미국' }, '테슬라': { sector: '임의소비재', country: '미국' },
+  'META': { sector: '통신서비스', country: '미국' }, 'JPM': { sector: '금융', country: '미국' },
+  'JNJ': { sector: '헬스케어', country: '미국' }, 'XOM': { sector: '에너지', country: '미국' }
+};
+/* 종목명·티커로 섹터·국가 기본값을 찾음: 내장 매핑 → 이전에 사용자가 직접 골라둔 값(설정에 저장) 순으로 확인 */
+function lookupStockMeta(name, symbol) {
+  const keys = [String(symbol || '').trim().toUpperCase(), String(name || '').trim()].filter(Boolean);
+  for (const k of keys) { if (STOCK_META[k]) return STOCK_META[k]; }
+  const learned = S.settings.stockMeta || {};
+  for (const k of keys) { if (learned[k]) return learned[k]; }
+  return null;
+}
+/* 사용자가 직접 고른 섹터·국가를 종목명·티커로 기억해뒀다가, 같은 종목을 다시 등록할 때 자동으로 채워줌 */
+function rememberStockMeta(name, symbol, sector, country) {
+  if (!sector && !country) return;
+  const key = String(name || '').trim() || String(symbol || '').trim().toUpperCase();
+  if (!key) return;
+  S.settings.stockMeta = S.settings.stockMeta || {};
+  S.settings.stockMeta[key] = { sector: sector || '', country: country || '' };
+}
+const TX_TYPES = { buy: '매수', sell: '매도', div: '배당' };
 const TITLES = { home: '자산 일기', assets: '내 보물함', book: '가계부', tx: '거래 일기', rebal: '균형 맞추기', settings: '설정' };
 const BOOK = {
-  income: { label: '수입', emo: '💵', color: '#8fd3b0', cats: [['급여', '💼'], ['부수입', '🎁'], ['금융소득', '💹'], ['기타수입', '➕']] },
+  income: { label: '수입', emo: '💵', color: '#8fd3b0', cats: [['급여', '💼'], ['부수입', '🎁'], ['이자수입(예금·적금)', '🏦'], ['기타수입', '➕']] },
   fixed: { label: '고정비', emo: '🧾', color: '#86c0f2', cats: [['주거·관리비', '🏠'], ['통신', '📱'], ['보험', '🛡️'], ['구독', '📺'], ['대출상환', '🏦'], ['교통정기', '🚌'], ['가족·용돈', '👨‍👩‍👧'], ['기타고정', '📌']] },
   variable: { label: '변동비', emo: '🛍️', color: '#ff9fb4', cats: [['식비', '🍚'], ['카페·간식', '☕'], ['쇼핑', '🛍️'], ['교통', '🚕'], ['문화·여가', '🎬'], ['의료', '💊'], ['경조사', '💐'], ['생활용품', '🧴'], ['기타변동', '📌']] },
   saving: { label: '저축·투자', emo: '🐷', color: '#f7cf4d', cats: [['적금', '🐷'], ['투자', '📈'], ['연금', '🌱'], ['비상금', '☂️']] }
 };
 const GROUPS = ['income', 'fixed', 'variable', 'saving'];
+/* 예금·적금·파킹통장 이자는 가계부에서, 주식·ETF 등 투자자산 배당은 거래일기에서만 기록해요(이중집계 방지) */
+const BOOK_INTEREST_CAT = '이자수입(예금·적금)';
 function bookEmo(g, c) { const f = (BOOK[g] || BOOK.variable).cats.find(x => x[0] === c); return f ? f[1] : BOOK[g].emo; }
 const TAX = { normal: ['일반과세 15.4%', 0.154], pref: ['세금우대 9.5%', 0.095], free: ['비과세 0%', 0] };
 const DEFAULT_MODEL = 'claude-sonnet-5';
 
+/* 주의: 아래 목표 아이콘 상수는 load()→migrate()→normGoal()에서 쓰이므로 반드시 `let S = load()`보다 위에 있어야 함(const 선언 전 접근 시 오류 → 저장된 데이터가 빈 화면으로 보이던 문제) */
+/* 목표 유형(목적 태그)별 기본 아이콘 — 새 목표를 만들 때 이 기본값이 먼저 선택되고, 목표 화면에서 다른 아이콘으로 바꿀 수 있어요 */
+const GOAL_DEFAULT_ICON = { '주거자금': '🏠', '사업자금': '💼', '연금': '🌱', '비상금': '☂️', '기타': '🎯' };
+const GOAL_ICONS = ['🏠', '🌱', '☂️', '🎯', '💼', '🎓', '✈️', '🚗', '💍', '👶', '🐾', '🎁'];
+/* v5(금융대시보드판) 백업을 가져와도 목표 아이콘이 유지되도록, v5의 아이콘 이름을 이모지로 되돌리는 표 */
+const GOAL_ICON_FROM_NAME = { home: '🏠', sprout: '🌱', umbrella: '☂️', target: '🎯', briefcase: '💼', graduation: '🎓', plane: '✈️', car: '🚗', heart: '💍', users: '👶', flag: '🐾', gift: '🎁' };
+function goalIcon(g) { return (g && g.icon) || GOAL_DEFAULT_ICON[g && g.purpose] || '🎯'; }
 /* ───────── 상태 ───────── */
 function defaultState() {
   return {
@@ -61,6 +167,7 @@ function defaultState() {
       band: 3,
       goals: [],
       taxRates: { ...DEFAULT_TAX_RATES },
+      targetReturnRate: 0,
       twelveKey: '',
       claudeKey: '',
       claudeModel: DEFAULT_MODEL,
@@ -68,28 +175,42 @@ function defaultState() {
       fxManual: 0,
       lastBackup: '',
       priceRefreshedAt: 0,
-      lock: { enabled: false, pinHash: '', salt: '', webauthnId: '' }
+      lock: { enabled: false, pinHash: '', salt: '' },
+      stockMeta: {}
     },
     fx: { USD: 0, at: '' }
   };
 }
 
 let S = load();
-let ui = { tab: 'home', txFilter: 'all', open: {}, tradeHist: {}, rebalMode: 'add', extra: 0, bookMonth: '', perfPeriod: 'month', gapRelative: false };
+let ui = { tab: 'home', txFilter: 'all', open: {}, tradeHist: {}, rebalMode: 'add', extra: 0, bookMonth: '', perfPeriod: 'month', gapRelative: false, subChartView: {}, returnGuideOpen: false };
 
 function load() {
   try {
     const raw = localStorage.getItem(STORE_KEY);
     if (!raw) return defaultState();
     return migrate(JSON.parse(raw));
-  } catch (e) { return defaultState(); }
+  } catch (e) {
+    /* 안전장치: 저장 데이터를 읽다가 오류가 나면, 빈 상태로 덮어쓰기 전에 원본을 별도 키에 보관해 둠 */
+    try { const r0 = localStorage.getItem(STORE_KEY); if (r0) localStorage.setItem(STORE_KEY + '.recovery', r0); } catch (e2) {}
+    return defaultState();
+  }
 }
 function migrate(d) {
   const base = defaultState();
   const out = { ...base, ...d, settings: { ...base.settings, ...(d.settings || {}) }, fx: { ...base.fx, ...(d.fx || {}) } };
+  // 분류명 변경: '현금·예금' → '현금성자산' (기존 데이터가 새 분류표에서 사라지지 않도록 값을 옮겨줌)
+  if (out.settings.targets && out.settings.targets['현금·예금'] != null) {
+    if (out.settings.targets['현금성자산'] == null) out.settings.targets['현금성자산'] = out.settings.targets['현금·예금'];
+    delete out.settings.targets['현금·예금'];
+  }
+  if (out.settings.taxRates && out.settings.taxRates['현금·예금'] != null) delete out.settings.taxRates['현금·예금'];
+  if (Array.isArray(out.settings.goals)) out.settings.goals.forEach(g => { if (g && Array.isArray(g.cats)) g.cats = g.cats.map(c => c === '현금·예금' ? '현금성자산' : c); });
+  if (Array.isArray(out.assets)) out.assets.forEach(a => { if (a && a.cat === '현금·예금') a.cat = '현금성자산'; });
   out.settings.targets = { ...DEFAULT_TARGETS, ...(out.settings.targets || {}) };
   out.settings.taxRates = { ...DEFAULT_TAX_RATES, ...(out.settings.taxRates || {}) };
   out.settings.lock = { ...base.settings.lock, ...(out.settings.lock || {}) };
+  delete out.settings.lock.webauthnId; // 생체인증 기능 제거: 예전에 등록됐던 credential 값이 남아있어도 더 이상 저장·참조하지 않음
   // 옛 단일 목표(goal) → 복수 목표(goals) 배열로 이전
   out.settings.goals = Array.isArray(out.settings.goals) ? out.settings.goals.map(normGoal) : [];
   if (!out.settings.goals.length && d.settings && d.settings.goal && num(d.settings.goal.amount) > 0) {
@@ -102,6 +223,9 @@ function migrate(d) {
   out.book = { ...base.book, ...(d.book || {}) };
   out.book.entries = Array.isArray(out.book.entries) ? out.book.entries : [];
   out.book.recurring = Array.isArray(out.book.recurring) ? out.book.recurring : [];
+  // 가계부 "금융소득" 분류명 변경: 배당(거래일기 전용)과 헷갈리지 않도록 '이자수입(예금·적금)'으로 이름을 바꿈 (기존 기록은 그대로 유지)
+  out.book.entries.forEach(e => { if (e && e.group === 'income' && e.cat === '금융소득') e.cat = BOOK_INTEREST_CAT; });
+  out.book.recurring.forEach(rc => { if (rc && rc.group === 'income' && rc.cat === '금융소득') rc.cat = BOOK_INTEREST_CAT; });
   if (!out.settings.claudeModel) out.settings.claudeModel = DEFAULT_MODEL;
   out.v = 4;
   return out;
@@ -112,6 +236,7 @@ function normGoal(g) {
     id: g.id || uid(),
     name: g.name || '목표',
     purpose: PURPOSES.includes(g.purpose) ? g.purpose : '기타',
+    icon: GOAL_ICONS.includes(g.icon) ? g.icon : (GOAL_ICON_FROM_NAME[g.icon] || ''),
     cats: Array.isArray(g.cats) ? g.cats.filter(c => CATS.includes(c)) : [],
     date: g.date || '',
     amount: num(g.amount),
@@ -141,6 +266,11 @@ function normAsset(a) {
     amount: num(a.amount), cost: a.cost === '' || a.cost == null ? null : num(a.cost),
     src: ['manual', 'coingecko', 'twelvedata'].includes(a.src) ? a.src : 'manual',
     symbol: a.symbol || '', priceAt: a.priceAt || '', updatedAt: a.updatedAt || '',
+    payCount: a.payCount === '' || a.payCount == null ? null : num(a.payCount),
+    isResidence: !!a.isResidence,
+    fxExposure: ['exposed', 'hedged'].includes(a.fxExposure) ? a.fxExposure : '',
+    sector: SECTORS.includes(a.sector) ? a.sector : '',
+    country: COUNTRIES.includes(a.country) ? a.country : '',
     components: Array.isArray(a.components) ? a.components.map(c => ({ name: c.name || '', pct: num(c.pct) })) : [],
     memo: a.memo || '',
     dep: normDep(a.dep)
@@ -152,6 +282,7 @@ function normDep(d) {
     kind: ['deposit', 'saving'].includes(d.kind) ? d.kind : 'none',
     rate: num(d.rate), start: d.start || '', end: d.end || '',
     principal: num(d.principal), monthly: num(d.monthly),
+    manualPaid: d.manualPaid === '' || d.manualPaid == null ? null : num(d.manualPaid),
     interest: d.interest === 'compound' ? 'compound' : 'simple',
     tax: ['normal', 'pref', 'free'].includes(d.tax) ? d.tax : 'normal'
   };
@@ -202,6 +333,7 @@ function monthKey(d = new Date()) { return d.getFullYear() + '-' + String(d.getM
 function prevMonthKey() { const d = new Date(); d.setDate(1); d.setMonth(d.getMonth() - 1); return monthKey(d); }
 function fmtInput(n) { return n ? nf6.format(n) : ''; }
 function catColor(c) { return CAT_COLORS[CATS.indexOf(c)] || '#999'; }
+function qtyUnit(c) { return c === '암호화폐' ? '개' : c === '원자재' ? 'g' : '주'; }
 function soft(c) { return `color-mix(in srgb, ${c} 38%, var(--card))`; }
 function E(x) { return `<i class="emo">${x}</i>`; }
 function dateLabel() {
@@ -226,8 +358,13 @@ function depInfo(a) {
   const r = d.rate / 100, n = monthsBetween(d.start, d.end), t = today();
   const elapsed = t >= d.start ? monthsBetween(d.start, t) : -1;
   const saving = d.kind === 'saving';
-  const principalTotal = saving ? d.monthly * n : d.principal;
-  const paid = saving ? d.monthly * Math.max(0, Math.min(n, elapsed + 1)) : (t >= d.start ? d.principal : 0);
+  const monthsPaidByPlan = Math.max(0, Math.min(n, elapsed + 1));
+  const autoPaid = saving ? d.monthly * monthsPaidByPlan : (t >= d.start ? d.principal : 0);
+  const hasManual = saving && d.manualPaid != null && d.manualPaid > 0;
+  const paid = hasManual ? d.manualPaid : autoPaid;
+  const paidDiff = hasManual ? d.manualPaid - autoPaid : 0;
+  const remainingMonths = Math.max(0, n - monthsPaidByPlan);
+  const principalTotal = saving ? (hasManual ? d.manualPaid + remainingMonths * d.monthly : d.monthly * n) : d.principal;
   let interest = 0;
   if (n > 0 && r > 0) {
     const i = r / 12;
@@ -239,7 +376,7 @@ function depInfo(a) {
   const day = 864e5, now = new Date(t), s0 = new Date(d.start), e0 = new Date(d.end);
   const dday = Math.round((e0 - now) / day);
   const progress = Math.max(0, Math.min(100, (now - s0) / (e0 - s0) * 100));
-  return { n, paid, principalTotal, interest, tax, afterTax, maturity: principalTotal + afterTax, dday, progress, saving };
+  return { n, paid, principalTotal, interest, tax, afterTax, maturity: principalTotal + afterTax, dday, progress, saving, hasManual, paidDiff, autoPaid };
 }
 function ddayLabel(n) { return n > 0 ? `D-${n}` : n === 0 ? 'D-DAY' : `만기 +${-n}일`; }
 function valueOf(a) { if (a.mode === 'qty') return a.qty * a.price * fxRate(a.cur); const di = depInfo(a); return di ? di.paid : a.amount; }
@@ -259,10 +396,14 @@ function totals() {
     if (t.type === 'div') { divAll += t.amountKRW || 0; if ((t.date || '').startsWith(y)) divYear += t.amountKRW || 0; }
     if (t.type === 'sell') realized += t.realizedKRW || 0;
   }
+  /* 배당(거래일기)과 이자(가계부)는 서로 다른 곳에서 각각 한 번씩만 가져와 합쳐요 — 이중집계 없이 "총수익"·"연간 배당·이자"에 함께 잡히도록 */
+  const intAll = bookInterestSum(() => true), intYear = bookInterestSum(d => d.startsWith(y));
+  const incomeAll = divAll + intAll, incomeYear = divYear + intYear;
   const unreal = value - cost;
-  return { value, cost, unreal, unrealPct: cost > 0 ? unreal / cost * 100 : 0, byCat, byPurpose, divAll, divYear, realized, totalReturn: unreal + realized + divAll };
+  return { value, cost, unreal, unrealPct: cost > 0 ? unreal / cost * 100 : 0, byCat, byPurpose, divAll, divYear, intAll, intYear, incomeAll, incomeYear, realized, totalReturn: unreal + realized + incomeAll };
 }
-function needsFx() { return S.assets.some(a => a.mode === 'qty' && a.cur === 'USD'); }
+function needsFx() { return S.assets.some(a => (a.mode === 'qty' && a.cur === 'USD') || (a.cat === '원자재' && a.src === 'twelvedata')); }
+function prevSnapshot() { return S.snapshots.filter(s => s.month < monthKey()).sort((a, b) => b.month.localeCompare(a.month))[0]; }
 
 /* ───────── 렌더링 ───────── */
 const $app = document.getElementById('app');
@@ -337,25 +478,55 @@ function autoSnapshotTick() {
   });
   save();
 }
+/* 총자산 카드 안의 "누적 수익률 + 캐릭터 상태 배지 + 현재 수익 구간 안내(접기/펼치기)".
+ * 수익률 값은 기존 totals()의 unrealPct를 그대로 쓰고(계산 로직 변경 없음), 투자원금이 없어 산정이 불가하면 "수익률 산정 중"으로 표시 */
+function returnStatusBlock(T) {
+  const raw = T && T.cost > 0 ? T.unrealPct : null;
+  const key = returnStatusKey(raw);
+  if (!key) {
+    return `<div class="rs-row">
+      <div class="rs-metric"><span class="rs-k">누적 수익률</span><span class="rs-v num faint">—</span></div>
+      <span class="rs-badge rs-pending">${RETURN_STATUS_PENDING.label}</span>
+    </div>
+    <p class="rs-empty no-print">${RETURN_STATUS_PENDING.guide}</p>`;
+  }
+  const p = roundReturnPct(raw), st = RETURN_STATUS[key], open = !!ui.returnGuideOpen;
+  const tone = `--rs-bg:${st.tone.bg};--rs-fg:${st.tone.fg};--rs-line:${st.tone.line}`;
+  return `<div class="rs-row">
+      <div class="rs-metric"><span class="rs-k">누적 수익률</span><span class="rs-v num ${cls(p)}">${signed(p, x => x.toFixed(2) + '%')}</span></div>
+      <span class="rs-badge" style="${tone}" data-status="${key}"><img class="rs-ic" src="${st.img}" alt="" width="22" height="22">${st.label}</span>
+    </div>
+    <div class="rs-guide no-print">
+      <button type="button" class="rs-guide-btn" data-action="return-guide" aria-expanded="${open}" aria-controls="rsGuidePanel">
+        <span>현재 수익 구간 안내</span>
+        <svg class="rs-chev" viewBox="0 0 16 16" aria-hidden="true"><path d="M4 6l4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </button>
+      <div class="rs-panel${open ? ' open' : ''}" id="rsGuidePanel" role="region" aria-label="현재 수익 구간 안내"${open ? '' : ' inert'}>
+        <div class="rs-panel-in">
+          <div class="rs-detail">
+            <img class="rs-ic-lg" src="${st.img}" alt="${st.alt}" width="52" height="52">
+            <div class="rs-detail-body">
+              <span class="rs-badge sm" style="${tone}">${st.label} · ${st.range}</span>
+              <p class="rs-desc">${st.desc}</p>
+              <p class="rs-points"><b>점검 포인트:</b> ${st.points}</p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>`;
+}
 function viewHome() {
   const T = totals();
   if (!S.assets.length) {
     return `<div class="card tape empty"><span class="big-emo emo">📔</span><b>새 자산 일기장이에요</b>첫 페이지를 채워볼까요?<br>보물함에 예금, 주식, 코인을 하나씩 넣어 주세요.<div style="margin-top:16px"><button class="btn primary" data-action="go" data-tab="assets">👛 보물함 채우러 가기</button></div></div>`;
   }
-  const prev = S.snapshots.filter(s => s.month < monthKey()).sort((a, b) => b.month.localeCompare(a.month))[0];
+  const prev = prevSnapshot();
   let deltaHtml = '', momPct = null;
   if (prev) {
     const d = T.value - prev.total; momPct = prev.total ? d / prev.total * 100 : 0;
     deltaHtml = `<span class="${cls(d)}">${arrow(d)} ${prev.month} 대비 ${signed(d)} (${signed(momPct, x => pct(x))})</span>`;
   }
   const warn = [];
-  /* 기분 이모지 기준: 전월 대비 증감률(있으면) 아니면 누적 수익률. 기준을 항상 화면에 같이 보여줘서 왜 이 표정인지 알 수 있게 함 */
-  const moodBasis = momPct !== null ? momPct : T.unrealPct;
-  const moodEmo = moodBasis >= 5 ? '🥳' : moodBasis >= 0 ? '😊' : moodBasis > -5 ? '🥲' : '🫂';
-  const moodSay = moodBasis >= 5 ? '오늘은 룰루랄라 기분 좋은 날!' : moodBasis >= 0 ? '차곡차곡 잘 모으고 있어요' : moodBasis > -5 ? '조금 흔들려도 괜찮아, 장기전이니까' : '토닥토닥, 원래 오르락내리락해요';
-  const moodBasisLabel = momPct !== null
-    ? `전월 대비 ${signed(momPct, x => pct(x))} 기준`
-    : `누적 수익률 ${signed(T.unrealPct, x => pct(x))} 기준 · 첫 달이라 전월 비교가 아직 없어요`;
   if (needsFx() && !fxRate('USD')) warn.push(['💱', '달러 자산이 있는데 환율이 없어요. 오른쪽 위 🔄를 누르거나 설정에서 직접 넣어 주세요.']);
   else if ((S.assets.some(a => a.mode === 'qty' && a.src !== 'manual') || needsFx()) && (Date.now() - (S.settings.priceRefreshedAt || 0)) > 24 * 3600e3) {
     warn.push(['🕰️', '시세를 하루 넘게 갱신 안 했어요. 오른쪽 위 🔄를 눌러 최신으로 맞춰요.']);
@@ -365,23 +536,19 @@ function viewHome() {
   ${todayActionCard(T)}
   ${warn.map(([e, w]) => `<div class="banner warn no-print">${E(e)}<span>${esc(w)}</span></div>`).join('')}
   <section class="card hero tape">
-    <span class="mood emo" aria-hidden="true">${moodEmo}</span>
     <div class="label">✍️ 오늘의 총자산</div>
     <div class="big num">${won(T.value)}</div>
     <div class="row num">${deltaHtml}</div>
-    <div class="mood-say">${moodSay}</div>
-    <details class="mood-detail no-print" style="margin-top:2px">
-      <summary>ⓘ 이 표정, 왜 나왔을까요?</summary>
-      <div class="small faint" style="margin-top:2px">${moodBasisLabel}<br>기준: +5%↑🥳 · 0~5%😊 · 0~-5%🥲 · -5%↓🫂</div>
-    </details>
+    ${returnStatusBlock(T)}
   </section>
   ${asOfLine()}
   <div class="stats num">
     <div class="stat"><div class="k">${E('🌟')} 평가손익</div><div class="v ${cls(T.unreal)}">${arrow(T.unreal)} ${signed(T.unreal, wonShort)}</div><div class="s ${cls(T.unreal)}">${signed(T.unrealPct, x => pct(x, 2))}</div></div>
     <div class="stat"><div class="k">${E('🐷')} 투자원금</div><div class="v">${wonShort(T.cost)}</div><div class="s faint">보유분 기준</div></div>
-    <div class="stat"><div class="k">${E('🍯')} 올해 배당</div><div class="v">${wonShort(T.divYear)}</div><div class="s faint">누적 ${wonShort(T.divAll)}</div></div>
-    <div class="stat"><div class="k">${E('🎉')} 총수익</div><div class="v ${cls(T.totalReturn)}">${arrow(T.totalReturn)} ${signed(T.totalReturn, wonShort)}</div><div class="s faint">평가+실현+배당 · 총수익률 ${signed(T.cost > 0 ? T.totalReturn / T.cost * 100 : 0, x => pct(x, 1))}</div></div>
+    <div class="stat"><div class="k">${E('🍯')} 올해 배당·이자</div><div class="v">${wonShort(T.incomeYear)}</div><div class="s faint">배당 ${wonShort(T.divYear)} + 이자 ${wonShort(T.intYear)} · 누적 ${wonShort(T.incomeAll)}</div></div>
+    <div class="stat"><div class="k">${E('🎉')} 총수익</div><div class="v ${cls(T.totalReturn)}">${arrow(T.totalReturn)} ${signed(T.totalReturn, wonShort)}</div><div class="s faint">평가+실현+배당·이자 · 총수익률 ${signed(T.cost > 0 ? T.totalReturn / T.cost * 100 : 0, x => pct(x, 1))}</div></div>
   </div>
+  ${returnsCard(T)}
   ${goalsCard(T)}
   ${savingsCard(true)}
   ${bookMini()}
@@ -465,7 +632,7 @@ function goalRow(g, T) {
   }).join(' ') : '';
   const warns = goalConflicts(g, T);
   return `<section class="card tape t3">
-    <h3>${stage} ${esc(g.name)} 목표 <span class="btn-row" style="display:inline-flex;gap:6px"><button class="link-btn no-print" style="font-size:14px" data-action="goal-edit" data-id="${g.id}">편집</button></span></h3>
+    <h3>${stage} ${goalIcon(g)} ${esc(g.name)} 목표 <span class="btn-row" style="display:inline-flex;gap:6px"><button class="link-btn no-print" style="font-size:14px" data-action="goal-edit" data-id="${g.id}">편집</button></span></h3>
     <div class="num" style="display:flex;justify-content:space-between;font-size:14px"><span class="hand"><b>${pct(rate)}</b> 왔어요!</span><span class="muted">${wonShort(cur)} / ${wonShort(g.amount)}</span></div>
     <div class="progress"><div style="width:${rate}%"></div></div>
     <div class="small muted">${rate >= 100 ? '🎊 목표 달성! 대단해요' : '남은 금액'} <b class="num">${won(remain)}</b>${g.date ? ` · 목표 ${esc(g.date)}` : ''}</div>
@@ -492,6 +659,38 @@ function donut(T) {
   const legend = CATS.filter(c => T.byCat[c] > 0).map(c =>
     `<div><i style="background:${catColor(c)}"></i><span>${CAT_EMO[c]} ${c}</span><b class="num">${pct(T.byCat[c] / T.value * 100)}</b></div>`).join('');
   return `<div class="donut-wrap"><svg class="donut" viewBox="0 0 150 150" role="img" aria-label="분류별 비중"><circle r="${R}" cx="75" cy="75" fill="none" stroke="var(--card2)" stroke-width="24"/>${segs}<text x="75" y="86" text-anchor="middle" font-size="30">💰</text></svg><div class="legend">${legend}</div></div>`;
+}
+/* 국내주식·해외주식 종목의 섹터별·국가별 구성을 보여주는 작은 도넛 — 대분류 도넛(donut)과 같은 원리, 색상 팔레트만 따로 씀 */
+const SUBCHART_COLORS = ['#8fd3b0', '#ff9fb4', '#86c0f2', '#d3b58e', '#b79cf2', '#ffb07f', '#f7cf4d', '#e0c473', '#c3c9d1', '#9ad0d6', '#f2a6c8', '#c8e08f', '#e3b6a0', '#a8b8e0'];
+function groupDonut(rows, centerEmo) {
+  const total = rows.reduce((s, r) => s + r.value, 0);
+  const R = 52, C = 2 * Math.PI * R; let off = 0;
+  const segs = rows.map((r, i) => {
+    if (!r.value || total <= 0) return '';
+    const len = r.value / total * C;
+    const s = `<circle r="${R}" cx="66" cy="66" fill="none" stroke="${r.color || SUBCHART_COLORS[i % SUBCHART_COLORS.length]}" stroke-width="19" stroke-dasharray="${Math.max(0, len - 2)} ${C - Math.max(0, len - 2)}" stroke-dashoffset="${-off}" transform="rotate(-90 66 66)"/>`;
+    off += len; return s;
+  }).join('');
+  const legend = rows.filter(r => r.value > 0).map((r, i) =>
+    `<div><i style="background:${r.color || SUBCHART_COLORS[i % SUBCHART_COLORS.length]}"></i><span>${esc(r.label)}</span><b class="num">${pct(total > 0 ? r.value / total * 100 : 0)}</b></div>`).join('');
+  return `<div class="donut-wrap"><svg class="donut" style="width:132px;height:132px" viewBox="0 0 132 132" role="img"><circle r="${R}" cx="66" cy="66" fill="none" stroke="var(--card2)" stroke-width="19"/>${segs}<text x="66" y="74" text-anchor="middle" font-size="24">${centerEmo}</text></svg><div class="legend">${legend}</div></div>`;
+}
+/* 국내주식·해외주식 섹션 아래에 붙는 "섹터별 보기 / 국가별 보기" 토글 + 도넛. 섹터·국가 정보가 없는 종목은 "미분류"로 묶고, 이름을 눌러 바로 등록 화면으로 연결함 */
+function sectorCountrySection(cat, list) {
+  const view = ui.subChartView[cat] === 'country' ? 'country' : 'sector';
+  const key = view === 'sector' ? 'sector' : 'country';
+  const groups = {};
+  list.forEach(a => { const k = a[key] || '미분류'; groups[k] = (groups[k] || 0) + valueOf(a); });
+  const rows = Object.entries(groups).sort((a, b) => b[1] - a[1]).map(([label, value]) => ({ label, value, color: label === '미분류' ? 'var(--line)' : undefined }));
+  const unclassified = list.filter(a => !a[key]);
+  return `<div class="subchart" style="margin:6px 0 14px">
+    <div class="seg" style="margin:0 0 8px">
+      <button type="button" data-action="subchart-view" data-cat="${cat}" data-v="sector" class="${view === 'sector' ? 'on' : ''}">🏷️ 섹터별 보기</button>
+      <button type="button" data-action="subchart-view" data-cat="${cat}" data-v="country" class="${view === 'country' ? 'on' : ''}">🌍 국가별 보기</button>
+    </div>
+    ${groupDonut(rows, view === 'sector' ? '🏷️' : '🌍')}
+    ${unclassified.length ? `<p class="small faint" style="margin:8px 2px 0">🌱 미분류 종목 ${unclassified.length}개는 ${view === 'sector' ? '섹터' : '국가'} 정보가 없어요 — 눌러서 채워주세요: ${unclassified.map(a => `<button type="button" class="link-btn" style="font-size:12.5px" data-action="edit-asset" data-id="${a.id}">${esc(a.name)}</button>`).join(', ')}</p>` : ''}
+  </div>`;
 }
 
 /* 보유 자산이 아예 없는 분류는 "부족"으로 겁주지 않고 'empty'(미보유)로 따로 분리해서 표시함.
@@ -569,8 +768,10 @@ function viewAssets() {
   const capBtn = `<button class="btn block capture-btn" data-action="capture">📷 증권앱 캡처로 시세 반영하기</button>`;
   return asOfLine() + capBtn + savingsCard(false) + CATS.filter(c => S.assets.some(a => a.cat === c)).map(c => {
     const list = S.assets.filter(a => a.cat === c).sort((a, b) => valueOf(b) - valueOf(a));
+    const isStockCat = c === '국내주식' || c === '해외주식';
     return `<div class="group-head"><span>${E(CAT_EMO[c])} ${c}</span><span class="num">${won(T.byCat[c])}</span></div>
-    <div class="list">${list.map(assetItem).join('')}</div>`;
+    <div class="list">${list.map(assetItem).join('')}</div>
+    ${isStockCat && list.length ? sectorCountrySection(c, list) : ''}`;
   }).join('') + `<p class="hand faint" style="margin:12px 6px">콕 누르면 고칠 수 있어요 · 오르면 빨강(▲), 내리면 파랑(▼)</p>`;
 }
 /* 기록 피로도 줄이기: 자동 시세·예적금이 아닌 "직접 입력" 자산만 전체 수정폼 없이 값 하나만 빠르게 고칠 수 있게 함 */
@@ -586,10 +787,12 @@ function quickUpdateForm(id) {
   const html = `
     <p class="hand muted" style="margin:0 4px 12px">${esc(a.name)}의 ${isAmt ? '잔액' : '현재가'}만 콕 집어 빠르게 고쳐요 ⚡</p>
     <label class="field"><span>${isAmt ? '현재 평가금액 (원)' : `현재가 (${a.cur === 'USD' ? '달러' : '원'})`}</span><input class="input num" inputmode="${isAmt ? 'numeric' : 'decimal'}" id="qu_val" value="${fmtInput(cur)}"></label>
+    ${isAmt ? `<label class="check"><input type="checkbox" id="qu_paycount"> <span>📮 이번 납입, 회차 +1 ${a.payCount ? `<small class="faint">(현재 ${a.payCount}회차)</small>` : ''}</span></label>` : ''}
     <p class="hint">이름·분류 등 다른 항목까지 고치려면 이 항목을 눌러서 전체 수정을 열어 주세요.</p>`;
   openSheet(`⚡ ${isAmt ? '잔액' : '시세'} 빠르게 고치기`, html, () => {
     const v = num(val('qu_val'));
     if (isAmt) a.amount = v; else a.price = v;
+    if (isAmt && $sheetBody.querySelector('#qu_paycount')?.checked) a.payCount = (a.payCount || 0) + 1;
     a.updatedAt = nowStamp();
     save(); render(); toast('고쳤어요 ✨');
   });
@@ -597,15 +800,20 @@ function quickUpdateForm(id) {
 function assetItem(a) {
   const v = valueOf(a), c = costOf(a), pl = v - c, plp = c > 0 ? pl / c * 100 : 0;
   let sub = `${PURPOSE_EMO[a.purpose]} ${a.purpose}`;
-  if (a.mode === 'qty') sub += ` · ${nf6.format(a.qty)}${a.cat === '암호화폐' ? '개' : '주'} × ${a.cur === 'USD' ? '$' + nf2.format(a.price) : wonShort(a.price)}`;
+  if (a.mode === 'qty') sub += ` · ${nf6.format(a.qty)}${qtyUnit(a.cat)} × ${a.cur === 'USD' ? '$' + nf2.format(a.price) : wonShort(a.price) + (a.cat === '원자재' ? '/g' : '')}`;
   if (a.src !== 'manual') sub += ` · ${a.src === 'coingecko' ? '코인시세(자동)' : '주식시세(자동)'}`;
   else if (a.mode === 'qty') sub += ' · 직접입력';
   const di = depInfo(a);
   if (di) sub += ` · ${a.dep.rate}% · ${ddayLabel(di.dday)}`;
   if (a.priceAt && a.priceAt.includes('캡처')) sub += ' · 📷캡처';
-  /* sub 한 줄은 CSS가 말줄임표로 잘라서, 개별 기준시각은 안 잘리게 따로 한 줄 더 보여줌 */
-  const updatedLine = a.updatedAt
-    ? `<div class="small faint" style="padding:0 0 4px">🕰️ ${a.mode === 'amount' ? '직접 입력' : a.src === 'manual' ? '수동 입력' : ''}, ${esc(a.updatedAt)} 고침</div>` : '';
+  /* sub 한 줄은 CSS가 말줄임표로 잘라서, 개별 기준시각·회차는 안 잘리게 따로 한 줄 더 보여줌 */
+  const updatedBits = [];
+  if (a.updatedAt) updatedBits.push(`🕰️ ${a.mode === 'amount' ? '직접 입력' : a.src === 'manual' ? '수동 입력' : ''}, ${esc(a.updatedAt)} 고침`);
+  if (a.payCount) updatedBits.push(`📮 ${a.payCount}회차`);
+  if (a.isResidence) updatedBits.push('🏠 거주용');
+  if (a.fxExposure === 'exposed') updatedBits.push('💱 환노출형');
+  else if (a.fxExposure === 'hedged') updatedBits.push('💱 환헤지형');
+  const updatedLine = updatedBits.length ? `<div class="small faint" style="padding:0 0 4px">${updatedBits.join(' · ')}</div>` : '';
   const hasComp = a.components.length > 0; const open = ui.open[a.id];
   const histOpen = ui.tradeHist[a.id];
   const myTxs = tradeHistory(a.id);
@@ -641,6 +849,29 @@ function findSnapshotAtOrBefore(monthStr) {
   const cands = S.snapshots.filter(s => s.month <= monthStr).sort((a, b) => b.month.localeCompare(a.month));
   return cands[0] || null;
 }
+function returnsCard(T) {
+  const cumPct = T.cost > 0 ? T.totalReturn / T.cost * 100 : 0;
+  const mPrev = prevSnapshot();
+  const monthPct = mPrev && mPrev.total ? (T.value - mPrev.total) / mPrev.total * 100 : null;
+  const yBase = periodBaseline('y');
+  const yearPct = yBase && yBase.total ? (T.value - yBase.total) / yBase.total * 100 : null;
+  const target = Number(S.settings.targetReturnRate) || 0;
+  const hasTarget = target > 0;
+  const vsTarget = hasTarget && yearPct != null ? yearPct - target : null;
+  const row = (label, val, note) => `<div class="hbar" style="grid-template-columns:auto 1fr auto"><span>${label}</span><span></span><span class="num ${val == null ? 'faint' : cls(val)}">${val == null ? '—' : signed(val, x => x.toFixed(1) + '%')}</span></div>${note ? `<p class="small faint" style="margin:-2px 2px 8px">${note}</p>` : ''}`;
+  return `<section class="card tape">
+    <h3>📈 수익률 한눈에</h3>
+    ${row('누적 수익률 (전체 기간)', T.cost > 0 ? cumPct : null, T.cost > 0 ? '평가손익+실현손익+배당·이자 ÷ 투자원금 기준' : '아직 원금이 없어요')}
+    ${row('이번 달 수익률', monthPct, monthPct == null ? '전월 말 기록이 아직 없어요(첫 달)' : '전월 말 기록 대비')}
+    ${row('최근 12개월 수익률', yearPct, yearPct == null ? `📔 12개월 전 월간 기록이 아직 없어요(지금 ${S.snapshots.length}개월치 · 매달 자동으로 쌓여요)` : '12개월 전 기록 대비 · 그 사이 입출금도 섞여 있어 순수 운용수익률과는 달라요')}
+    <div class="hbar" style="grid-template-columns:auto 1fr auto"><span>목표 연수익률</span><span></span><span class="num">${hasTarget ? nf2.format(target) + '%' : '설정 안 함'}</span></div>
+    ${hasTarget
+      ? (yearPct == null
+        ? `<p class="small faint" style="margin:-2px 2px 0">최근 12개월 수익률이 나오면 목표와 비교해 보여드려요.</p>`
+        : `<p class="small ${vsTarget >= 0 ? 'up' : 'down'}" style="margin:-2px 2px 0">${vsTarget >= 0 ? '🎉 목표보다' : '🥲 목표보다'} ${Math.abs(vsTarget).toFixed(1)}%p ${vsTarget >= 0 ? '앞서요' : '못 미쳐요'} (최근 12개월 기준)</p>`)
+      : `<p class="small faint" style="margin:-2px 2px 0">설정 탭에서 목표 연수익률을 적으면 실제 성과와 비교해드려요.</p>`}
+  </section>`;
+}
 function periodBaseline(key) {
   const cur = monthKey();
   if (key === 'month') return findSnapshotAtOrBefore(shiftMonth(cur, -1));
@@ -657,15 +888,17 @@ function perfCard(T) {
   const fromDate = base.savedAt ? base.savedAt.slice(0, 10) : (base.month + '-28');
   const diff = T.value - base.total, diffPct = base.total ? diff / base.total * 100 : 0;
   const divInPeriod = S.txs.filter(t => t.type === 'div' && (t.date || '') > fromDate).reduce((s, t) => s + (t.amountKRW || 0), 0);
+  const intInPeriod = bookInterestSum(d => d > fromDate);
+  const incomeInPeriod = divInPeriod + intInPeriod;
   const realizedInPeriod = S.txs.filter(t => t.type === 'sell' && (t.date || '') > fromDate).reduce((s, t) => s + (t.realizedKRW || 0), 0);
-  const other = diff - divInPeriod - realizedInPeriod;
+  const other = diff - incomeInPeriod - realizedInPeriod;
   const rows = CATS.map(c => ({ c, d: (T.byCat[c] || 0) - ((base.byCat && base.byCat[c]) || 0) })).filter(r => Math.abs(r.d) >= 1).sort((a, b) => Math.abs(b.d) - Math.abs(a.d));
   return `<section class="card tape t2">
     <h3>📈 기간별 성과 <small>${esc(base.month)} 대비</small></h3>
     ${seg}
     <div class="stats num" style="margin:10px 0 8px"><div class="stat" style="box-shadow:none;background:var(--card2)"><div class="k">총자산 변동</div><div class="v ${cls(diff)}">${arrow(diff)} ${signed(diff, wonShort)}</div><div class="s ${cls(diff)}">${signed(diffPct, x => pct(x))}</div></div></div>
     <div class="list" style="box-shadow:none;background:var(--card2);margin:0 0 8px">
-      <div class="flow-row"><span>${E('🍯')} 배당·이자 수령</span><b class="num up">${signed(divInPeriod, wonShort)}</b></div>
+      <div class="flow-row"><span>${E('🍯')} 배당·이자 수령 <small class="faint">(배당 ${wonShort(divInPeriod)}+이자 ${wonShort(intInPeriod)})</small></span><b class="num up">${signed(incomeInPeriod, wonShort)}</b></div>
       <div class="flow-row"><span>${E('💸')} 실현손익</span><b class="num ${cls(realizedInPeriod)}">${signed(realizedInPeriod, wonShort)}</b></div>
       <div class="flow-row"><span>${E('📊')} 평가액 변동 <small class="faint">(입출금·가격·환율 포함)</small></span><b class="num ${cls(other)}">${signed(other, wonShort)}</b></div>
     </div>
@@ -681,15 +914,18 @@ function viewTx() {
   const T = totals();
   const y = new Date().getFullYear();
   const divMonths = Array.from({ length: 12 }, (_, i) => S.txs.filter(t => t.type === 'div' && (t.date || '').startsWith(`${y}-${String(i + 1).padStart(2, '0')}`)).reduce((s, t) => s + (t.amountKRW || 0), 0));
-  const dmax = Math.max(...divMonths, 1);
-  const hasIncome = T.realized !== 0 || T.divAll > 0;
+  const intMonths = Array.from({ length: 12 }, (_, i) => bookInterestSum(d => d.startsWith(`${y}-${String(i + 1).padStart(2, '0')}`)));
+  const incomeMonths = divMonths.map((v, i) => v + intMonths[i]);
+  const dmax = Math.max(...incomeMonths, 1);
+  const hasIncome = T.realized !== 0 || T.incomeAll > 0;
   const summary = hasIncome ? `<section class="card tape t3">
     <h3>🍀 수익 요약</h3>
     <div class="stats num" style="margin:0">
       <div class="stat" style="box-shadow:none;background:var(--card2)"><div class="k">💸 실현손익 (누적)</div><div class="v ${cls(T.realized)}">${signed(T.realized, wonShort)}</div></div>
-      <div class="stat" style="box-shadow:none;background:var(--card2)"><div class="k">🍯 ${y}년 배당·이자</div><div class="v">${wonShort(T.divYear)}</div></div>
+      <div class="stat" style="box-shadow:none;background:var(--card2)"><div class="k">🍯 ${y}년 배당·이자</div><div class="v">${wonShort(T.incomeYear)}</div><div class="s faint">배당 ${wonShort(T.divYear)} + 이자 ${wonShort(T.intYear)}</div></div>
     </div>
-    <div class="months" style="height:90px;margin-top:8px">${divMonths.map((v, i) => `<div class="m" title="${i + 1}월 ${won(v)}"><div class="col" style="height:${v / dmax * 100}%;${v ? '' : 'opacity:.15'}"></div><div class="lab">${i + 1}</div></div>`).join('')}</div>
+    <div class="months" style="height:90px;margin-top:8px">${incomeMonths.map((v, i) => `<div class="m" title="${i + 1}월 ${won(v)} (배당 ${won(divMonths[i])} + 이자 ${won(intMonths[i])})"><div class="col" style="height:${v / dmax * 100}%;${v ? '' : 'opacity:.15'}"></div><div class="lab">${i + 1}</div></div>`).join('')}</div>
+    <p class="small faint" style="margin:6px 2px 0">배당은 거래일기, 이자는 가계부 "이자수입(예금·적금)" 기록을 합친 값이에요.</p>
     <p class="hand faint" style="margin:6px 0 0">월별 꿀단지 🍯 (${y}년)</p>
   </section>` : `<section class="card tape t3 no-print" style="opacity:.6">
     <h3>🍀 수익 요약</h3>
@@ -715,7 +951,8 @@ function txItem(t) {
   else if (t.mode === 'amount') { right = `<div class="t">${won(t.amount)}</div>`; }
   else {
     const p = t.cur === 'USD' ? '$' + nf2.format(t.price) : won(t.price);
-    sub += ` · ${nf6.format(t.qty)}주 × ${p}`;
+    const unit = a ? qtyUnit(a.cat) : '주';
+    sub += ` · ${nf6.format(t.qty)}${unit} × ${p}${a && a.cat === '원자재' ? '/g' : ''}`;
     const localTotal = t.qty * t.price;
     right = `<div class="t">${dualCur(localTotal, t.cur)}</div>`;
   }
@@ -749,7 +986,8 @@ function viewRebal() {
   const targetsCard = `<section class="card tape t2">
     <h3>🎯 목표 비중 <small>${CATS.every(c => (Number(tg[c]) || 0) === (DEFAULT_TARGETS[c] || 0)) ? '공격형·장기 기본값' : '내가 정한 비중'}</small></h3>
     ${CATS.map(c => `<div class="target-row"><span>${E(CAT_EMO[c])} ${c}</span>
-      <input class="input num" inputmode="decimal" data-target="${c}" value="${tg[c] ?? 0}" aria-label="${c} 목표 %"></div>`).join('')}
+      <input class="input num" inputmode="decimal" data-target="${c}" value="${tg[c] ?? 0}" aria-label="${c} 목표 %"></div>
+      ${c === '암호화폐' && Number(tg[c]) > 10 ? `<p class="small up" style="margin:-2px 2px 8px">⚠️ 암호화폐는 변동성이 커서 목표비중을 10% 이하로 두는 걸 권장해요.</p>` : ''}`).join('')}
     <div class="sumline"><span>합계 <b class="num ${sumOk ? '' : 'up'}">${nf2.format(sum)}%</b> ${sumOk ? '<span class="pill ok">👌 딱 좋아요</span>' : '<span class="pill high">🙈 100%가 아니에요</span>'}</span>
       <span class="btn-row">${sumOk ? '' : '<button class="btn sm primary" data-action="normalize">🪄 100%로</button>'}<button class="btn sm" data-action="reset-targets">↩️ 기본값</button></span></div>
     <div class="sumline"><span class="small muted">허용 오차 (±%p)</span><input class="input num" style="width:92px;padding:8px 10px;text-align:right" inputmode="decimal" data-band value="${S.settings.band}"></div>
@@ -777,7 +1015,7 @@ function viewRebal() {
   const m = monthKey(); const investable = monthSums(m).left;
   const modeInfo = {
     add: { label: '이번 달 투자 가능 금액을 부족한 자산군에 우선 배분해요. 장기 적립식 투자에 적합해요.' },
-    cashonly: { label: '매도 없이, 보유 현금성 자산(현금·예금)만 활용해 부족한 자산군을 채워요. 세금·거래비용을 최소화하는 방식이에요.' },
+    cashonly: { label: '매도 없이, 보유 현금성 자산만 활용해 부족한 자산군을 채워요. 세금·거래비용을 최소화하는 방식이에요.' },
     full: { label: '매수·매도를 포함해 모든 분류를 목표 비중에 정확히 맞춰요. 전략 변경·위험 관리가 필요할 때 적합해요.' }
   };
   const planCard = `<section class="card tape t3">
@@ -786,7 +1024,7 @@ function viewRebal() {
     ${mode === 'add' ? `<label class="field"><span>💌 이번에 넣을 금액 (원)</span><input class="input num" inputmode="numeric" data-extra value="${fmtInput(ui.extra)}" placeholder="예: 1,000,000"></label>` : ''}
     <p class="hint">${modeInfo[mode].label}</p>
     ${mode === 'add' ? `<p class="small faint" style="margin:-6px 2px 8px">참고: 이번 달 가계부 기준 투자 가능 금액은 <b class="num">${won(Math.max(0, investable))}</b>이에요.${!S.book.entries.length ? ' (가계부에 아직 기록이 없어서 0원으로 나와요 — 실제 투자 여력이 없다는 뜻이 아니에요. 가계부 탭에서 수입·지출을 적으면 계산돼요.)' : investable <= 0 ? ' (이번 달 가계부 기록 기준으로는 남는 돈이 없어요.)' : ''}</p>` : ''}
-    ${mode === 'cashonly' ? `<p class="small faint" style="margin:-6px 2px 8px">현재 현금·예금 보유액 <b class="num">${wonShort(T.byCat['현금·예금'] || 0)}</b> 안에서만 조정해요.</p>` : ''}
+    ${mode === 'cashonly' ? `<p class="small faint" style="margin:-6px 2px 8px">현재 현금성자산 보유액 <b class="num">${wonShort(T.byCat['현금성자산'] || 0)}</b> 안에서만 조정해요.</p>` : ''}
     ${!sumOk ? `<p class="small up">🙈 목표 비중 합계를 100%로 맞춰야 계산할 수 있어요.</p>` : planHtml(plan, T)}
     <p class="small faint" style="margin:8px 2px 0">⚠️ 이 계산은 목표 비중에 따른 참고용 결과이며 투자 권유가 아니에요. 최종 판단과 책임은 본인에게 있어요.</p>
   </section>`;
@@ -808,14 +1046,14 @@ function rebalPlan(T, mode, extra) {
     return CATS.map(c => ({ c, amt: tg[c] / 100 * T.value - T.byCat[c] })).filter(r => Math.abs(r.amt) >= 1);
   }
   if (mode === 'cashonly') {
-    const avail = Math.max(0, T.byCat['현금·예금'] || 0);
+    const avail = Math.max(0, T.byCat['현금성자산'] || 0);
     if (!avail) return [];
-    const def = CATS.filter(c => c !== '현금·예금').map(c => ({ c, d: Math.max(0, tg[c] / 100 * T.value - T.byCat[c]) }));
+    const def = CATS.filter(c => c !== '현금성자산').map(c => ({ c, d: Math.max(0, tg[c] / 100 * T.value - T.byCat[c]) }));
     const dsum = def.reduce((s, r) => s + r.d, 0);
     if (!dsum) return [];
     const out = dsum <= avail ? def.map(r => ({ c: r.c, amt: r.d })) : def.map(r => ({ c: r.c, amt: r.d / dsum * avail }));
     const used = out.reduce((s, r) => s + r.amt, 0);
-    if (used >= 1) out.push({ c: '현금·예금', amt: -used });
+    if (used >= 1) out.push({ c: '현금성자산', amt: -used });
     return out.filter(r => Math.abs(r.amt) >= 1);
   }
   // add: 신규자금만 배분
@@ -833,7 +1071,7 @@ function rebalPlan(T, mode, extra) {
   return out.filter(r => r.amt >= 1);
 }
 function planHtml(plan, T) {
-  if (!plan || !plan.length) return `<p class="small muted" style="margin:0">${ui.rebalMode === 'add' ? '💌 금액을 넣으면 어디에 얼마씩 넣을지 알려줄게요' : ui.rebalMode === 'cashonly' ? '🧺 활용할 현금·예금이 없거나 이미 균형이 맞아요' : '😊 이미 목표 비중과 똑같아요!'}</p>`;
+  if (!plan || !plan.length) return `<p class="small muted" style="margin:0">${ui.rebalMode === 'add' ? '💌 금액을 넣으면 어디에 얼마씩 넣을지 알려줄게요' : ui.rebalMode === 'cashonly' ? '🧺 활용할 현금성자산이 없거나 이미 균형이 맞아요' : '😊 이미 목표 비중과 똑같아요!'}</p>`;
   const totalCost = plan.reduce((s, r) => { const t = estTaxFee(r.c, r.amt); return s + (t ? t.cost : 0); }, 0);
   const rowsHtml = plan.sort((a, b) => b.amt - a.amt).map(r => {
     const assets = S.assets.filter(a => a.cat === r.c);
@@ -849,7 +1087,7 @@ function planHtml(plan, T) {
     const after = (T.byCat[r.c] || 0) + r.amt;
     const afterPct = T.value ? after / T.value * 100 : 0;
     return `<div class="item" style="display:block">
-      <div style="display:flex;justify-content:space-between;align-items:center;gap:8px"><span><span class="pill ${r.amt > 0 ? 'buy' : 'sell'}">${r.amt > 0 ? '🛒 사기' : r.c === '현금·예금' ? '🧺 사용' : '💸 팔기'}</span> <b>${CAT_EMO[r.c]} ${r.c}</b></span><b class="num ${cls(r.amt)}">${won(Math.abs(r.amt))}</b></div>
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:8px"><span><span class="pill ${r.amt > 0 ? 'buy' : 'sell'}">${r.amt > 0 ? '🛒 사기' : r.c === '현금성자산' ? '🧺 사용' : '💸 팔기'}</span> <b>${CAT_EMO[r.c]} ${r.c}</b></span><b class="num ${cls(r.amt)}">${won(Math.abs(r.amt))}</b></div>
       ${hints ? `<div class="comp" style="padding:6px 0 0 4px">${hints}</div>` : `<div class="small faint" style="margin-top:4px">🫙 아직 이 분류에 담긴 자산이 없어요</div>`}
       <div class="small faint" style="margin-top:4px">거래 후 비중 ≈ ${pct(afterPct)}${tax && tax.cost > 0 ? ` · 예상 세금·수수료 ${won(tax.cost)}(${nf2.format(tax.rate)}%)` : ''}</div>
       ${tax && tax.note ? `<div class="small faint">${esc(tax.note)}</div>` : ''}
@@ -869,21 +1107,26 @@ function savingsCard(compact) {
       <div class="dep-top"><span class="t">${di.saving ? '🐷' : '🏦'} ${esc(a.name)}</span><span class="pill ${di.dday <= 30 && di.dday >= 0 ? 'high' : 'ok'}">${ddayLabel(di.dday)}</span></div>
       <div class="dep-mid small muted"><span>${di.saving ? `월 ${wonShort(a.dep.monthly)} 적금` : '예금'} · 연 ${a.dep.rate}% ${a.dep.interest === 'compound' ? '월복리' : '단리'}</span><span>${esc(a.dep.end)} 만기</span></div>
       <div class="progress thin"><div style="width:${di.progress}%"></div></div>
-      <div class="dep-bot"><span class="small muted">지금까지 ${wonShort(di.paid)}</span><span>만기 받을 돈 <b class="num">${won(di.maturity)}</b></span></div>
+      <div class="dep-bot"><span class="small muted">지금까지 ${wonShort(di.paid)}${di.hasManual ? ' ✏️' : ''}</span><span>만기 받을 돈 <b class="num">${won(di.maturity)}</b></span></div>
       ${compact ? '' : `<div class="small faint" style="text-align:right">원금 ${won(di.principalTotal)} + 이자 ${won(di.interest)} − 세금 ${won(di.tax)} (${TAX[a.dep.tax][0]})</div>`}
+      ${(!compact && di.hasManual && di.paidDiff !== 0) ? `<div class="small ${di.paidDiff > 0 ? 'up' : 'down'}" style="text-align:right">⚠️ 자동계산과 ${won(Math.abs(di.paidDiff))} 차이가 있어 직접 입력값을 사용 중이에요</div>` : ''}
     </button>`).join('');
   if (compact && !rows) return '';
   return `<section class="card tape t2">
     <h3>🏦 예적금 ${compact ? '만기 달력' : '현황'} ${compact ? `<button class="link-btn" style="font-size:14px" data-action="go" data-tab="assets">전체 ›</button>` : `<small>${list.length}개</small>`}</h3>
     ${compact ? '' : `<div class="mini-stats num"><div><span>넣은 돈</span><b>${wonShort(sumPaid)}</b></div><div><span>세후 이자</span><b class="up">+${wonShort(sumInt)}</b></div><div><span>만기 합계</span><b>${wonShort(sumMat)}</b></div></div>`}
     <div class="dep-list">${rows}</div>
-    <p class="small faint" style="margin:8px 2px 0">예상액은 월 단위 표준식으로 계산한 참고값이에요. 실제 금액은 은행의 일할 계산·중도해지 조건에 따라 조금 달라요.</p>
+    <p class="small faint" style="margin:8px 2px 0">예상액은 월 단위 표준식으로 계산한 참고값이에요. 실제 금액은 은행의 일할 계산·중도해지 조건에 따라 조금 달라요. 🏦 실제로 이자를 받으면 가계부의 "이자수입(예금·적금)"에 기록해 주세요 — 여기 표시된 예상 이자와는 다를 수 있어요.</p>
   </section>`;
 }
 
 /* ───────── 가계부 ───────── */
 function curBookMonth() { return ui.bookMonth || monthKey(); }
 function shiftMonth(m, k) { const [y, mo] = m.split('-').map(Number); return monthKey(new Date(y, mo - 1 + k, 1)); }
+/* 가계부에 "이자수입(예금·적금)"으로 기록된 금액만 골라 합산 — pred(dateStr)로 기간을 지정 (배당은 거래일기 쪽 divKRW* 계열과 항상 분리해서 계산해요) */
+function bookInterestSum(pred) {
+  return S.book.entries.reduce((s, e) => (e.group === 'income' && e.cat === BOOK_INTEREST_CAT && pred(e.date || '') ? s + e.amount : s), 0);
+}
 function monthSums(m) {
   const r = { income: 0, fixed: 0, variable: 0, saving: 0, byCat: {} };
   for (const e of S.book.entries) {
@@ -1052,12 +1295,14 @@ function bookForm(e) {
   const rc = e.recurId ? S.book.recurring.find(x => x.id === e.recurId) : null;
   const html = `
     <div class="seg" id="b_group">${GROUPS.map(g => `<button type="button" data-g="${g}" class="${e.group === g ? 'on' : ''}">${BOOK[g].emo} ${BOOK[g].label}</button>`).join('')}</div>
-    <label class="field"><span>금액 (원)</span><input class="input num big-input" inputmode="numeric" id="b_amount" value="${fmtInput(e.amount)}" placeholder="0"></label>
+    <label class="field"><span id="b_amountLabel">금액 (원)</span><input class="input num big-input" inputmode="numeric" id="b_amount" value="${fmtInput(e.amount)}" placeholder="0"></label>
     <div class="field"><span>분류</span><div class="chips" id="b_cats"></div></div>
+    <p class="hint" id="finIncomeNote" hidden>🏦 "이자수입(예금·적금)"에는 파킹통장·예금·적금에서 받은 이자만 적어주세요. 📈 주식·ETF·펀드 배당은 여기 말고 거래일기 탭에서 "🍯 배당"으로 기록해야 연간 배당·총수익 계산에 잡혀요(이중 입력 방지). 💸 투자 매도로 생긴 실현손익도 가계부엔 넣지 않아요 — 거래일기의 투자성과로 따로 관리돼요. 팁: 매달 비슷한 이자를 받는다면 아래 "매달 반복 항목으로도 등록"에 체크해두면 다음 달부턴 확인만 누르면 돼요.</p>
     <div class="row2">
       <label class="field"><span>날짜</span><input class="input" type="date" id="b_date" value="${esc(e.date)}"></label>
       <label class="field"><span>메모</span><input class="input" id="b_memo" value="${esc(e.memo)}" placeholder="예: 점심, 월세"></label>
     </div>
+    <p class="small faint" id="b_dateNote" style="margin:-6px 2px 8px"></p>
     ${isNew ? `<label class="check"><input type="checkbox" id="b_recur"> <span>🔁 매달 반복 항목으로도 등록 <small class="faint">(월세·통신비·월급·적금 등)</small></span></label>` : rc ? `<p class="hint">🔁 매달 ${rc.day}일 반복 항목에서 만든 기록이에요.</p>` : ''}
     ${isNew ? '' : `<button class="btn danger block" data-action="book-del" data-id="${e.id}">🗑️ 기록 지우기</button>`}`;
   openSheet(isNew ? '💰 가계부 적기' : '✏️ 가계부 고치기', html, () => {
@@ -1078,7 +1323,9 @@ function bookForm(e) {
     save(); render(); toast(isNew ? `${bookEmo(group, next.cat)} 가계부에 적었어요` : '고쳤어요 ✨');
   });
   const drawCats = (g, sel) => {
+    const isIncome = g === 'income';
     $sheetBody.querySelector('#b_cats').innerHTML = BOOK[g].cats.map(([c, emo], i) => `<button type="button" class="chip ${(sel ? c === sel : i === 0) ? 'on' : ''}" data-c="${c}">${emo} ${c}</button>`).join('');
+    $sheetBody.querySelector('#finIncomeNote').hidden = !isIncome;
   };
   drawCats(e.group, e.cat);
   $sheetBody.querySelector('#b_group').addEventListener('click', ev => {
@@ -1089,6 +1336,14 @@ function bookForm(e) {
     const b = ev.target.closest('.chip'); if (!b) return;
     $sheetBody.querySelectorAll('#b_cats .chip').forEach(x => x.classList.toggle('on', x === b));
   });
+  /* 지금 보고 있는 달(◀▶로 이동한 달)과 다른 날짜로 저장하면, 홈 화면 "이번 달 가계부" 카드엔 안 잡혀서 헷갈릴 수 있어 미리 알려줌 */
+  const drawDateNote = () => {
+    const dv = val('b_date'); const ym = dv.slice(0, 7);
+    const note = $sheetBody.querySelector('#b_dateNote');
+    note.textContent = ym && ym !== monthKey() ? `📅 ${ym.replace('-', '년 ')}월 기록으로 들어가요 · 홈 화면 "이번 달 가계부" 카드는 이번 달(${monthKey().replace('-', '년 ')}월) 기록만 보여줘요` : '';
+  };
+  $sheetBody.querySelector('#b_date').addEventListener('change', drawDateNote);
+  drawDateNote();
 }
 function applyRecurring(m) {
   const pend = pendingRecurring(m); let n = 0;
@@ -1270,7 +1525,7 @@ function drawCaptureRows() {
           ${r.cands.length > 1 ? `<label class="field" style="margin:0"><span>다른 후보</span><select class="input" data-cap-cand>${r.cands.map(c => `<option value="${c.price}">${unit === '$' ? '$' + nf2.format(c.price) : nf0.format(c.price) + '원'} · ${esc(c.label)}</option>`).join('')}</select></label>` : `<span class="small faint" style="padding-bottom:12px">단위: ${unit}</span>`}
         </div>
         ${a.price > 0 && r.price > 0 && Math.abs(Math.log(r.price / a.price)) > Math.log(1.5) ? `<div class="small up" style="margin-top:6px">🤔 기존 가격과 차이가 커요. 숫자를 한 번 더 확인해 주세요.</div>` : ''}
-        ${r.qty ? `<label class="check" style="margin:8px 0 0"><input type="checkbox" data-cap-qty> <span class="small">수량도 캡처대로 ${nf6.format(r.qty)}${a.cat === '암호화폐' ? '개' : '주'}로 맞추기 (지금 ${nf6.format(a.qty)})</span></label>` : ''}
+        ${r.qty ? `<label class="check" style="margin:8px 0 0"><input type="checkbox" data-cap-qty> <span class="small">수량도 캡처대로 ${nf6.format(r.qty)}${qtyUnit(a.cat)}로 맞추기 (지금 ${nf6.format(a.qty)})</span></label>` : ''}
       </div>`; }).join('')}</div>
     ${cap.extra.length ? `<div class="section-label">🔗 보물함과 연결 안 된 종목</div><div class="list">${cap.extra.map((it, i) => `<div class="cap-row" data-x="${i}"><b>${esc(it.name || '?')}</b> <span class="small faint">${it.price ? nf2.format(num(it.price)) : ''} ${it.currency || ''}</span>
       <label class="field" style="margin:6px 0 0"><span>연결할 보물</span><select class="input" data-cap-link><option value="">연결 안 함</option>${qAssets.filter(a => !cap.rows.some(r => r.assetId === a.id)).map(a => `<option value="${a.id}">${esc(a.name)}</option>`).join('')}</select></label></div>`).join('')}</div>` : ''}`;
@@ -1309,10 +1564,21 @@ function viewSettings() {
     <div class="seg" style="margin:0">${[['system', '📱 자동'], ['light', '🌞 낮'], ['dark', '🌙 밤']].map(([k, l]) => `<button data-action="theme" data-v="${k}" class="${s.theme === k ? 'on' : ''}">${l}</button>`).join('')}</div>
   </section>
 
+  <div class="section-label">🏷️ 섹터·국가 분류 기준</div>
+  <section class="card" style="margin-top:8px">
+    <p class="small muted" style="margin:0">자산 화면의 국내주식·해외주식 "섹터별 보기"는 GICS(글로벌 산업 분류 기준)의 11개 섹터를 우리말로 옮긴 것이고, 지수형·채권형 ETF처럼 한 섹터로 묶기 어려운 상품은 "지수형 ETF(혼합)"·"채권형 ETF"로 따로 두었어요(엄격한 GICS 기준은 아니고 이 앱에서 보기 편하게 정리한 임의 분류예요). "국가별 보기"는 종목이 속한 시장/거래소 기준의 대략적인 구분이에요. 나중에 분류 기준이 바뀌면 여기에 다시 안내할게요.</p>
+  </section>
+
   <div class="section-label">🎯 목표</div>
   <section class="card" style="margin-top:8px">
-    ${s.goals.length ? s.goals.map(g => `<button class="btn block" style="margin:0 0 8px" data-action="goal-edit" data-id="${g.id}">🏡 ${esc(g.name)} 목표 고치기</button>`).join('') : '<p class="small muted" style="margin:0 0 10px">아직 만든 목표가 없어요.</p>'}
+    ${s.goals.length ? s.goals.map(g => `<button class="btn block" style="margin:0 0 8px" data-action="goal-edit" data-id="${g.id}">${goalIcon(g)} ${esc(g.name)} 목표 고치기</button>`).join('') : '<p class="small muted" style="margin:0 0 10px">아직 만든 목표가 없어요.</p>'}
     <button class="btn sm ${s.goals.length ? '' : 'primary'} block" style="margin:0" data-action="goal-edit" data-id="">➕ 목표 추가</button>
+  </section>
+
+  <div class="section-label">📈 목표 연수익률</div>
+  <section class="card" style="margin-top:8px">
+    <div class="sumline"><span class="small muted">연 목표 수익률 (%)</span><input class="input num" style="width:92px;padding:8px 10px;text-align:right" inputmode="decimal" data-targetreturn value="${s.targetReturnRate || ''}" placeholder="예: 6"></div>
+    <p class="hint" style="margin-top:8px">홈 화면의 "수익률 한눈에" 카드에서 최근 12개월 수익률과 비교해 보여드려요. 참고로 보수적 3%·중간 6%·공격적 9% 정도가 흔히 쓰이는 가정치예요.</p>
   </section>
 
   <div class="section-label">📡 시세·환율</div>
@@ -1335,9 +1601,9 @@ function viewSettings() {
       <span>${s.lock.enabled ? '🔐 앱 잠금 켜짐' : '🔓 앱 잠금 꺼짐'}</span>
       <button class="btn sm ${s.lock.enabled ? 'danger' : 'primary'}" data-action="${s.lock.enabled ? 'lock-off' : 'lock-setup'}">${s.lock.enabled ? '끄기' : 'PIN 설정하기'}</button>
     </div>
-    ${s.lock.enabled ? `<p class="hint" style="margin-top:8px">앱을 다시 열 때 PIN(또는 등록한 생체인증)을 물어봐요.</p>
-      <button class="btn block" style="margin-top:8px" data-action="lock-setup">🔁 PIN 바꾸기</button>
-      <button class="btn block" style="margin-top:8px" data-action="lock-bio-register">${s.lock.webauthnId ? '🫆 생체인증 다시 등록' : '🫆 생체인증(Face ID 등) 등록'}</button>` : '<p class="hint" style="margin-top:8px">PIN을 설정하면 앱을 다시 열 때 잠금화면이 나타나요. 이 기기의 브라우저 저장소를 완전히 대체하지는 않지만, 화면을 슬쩍 보는 것 정도는 막아줘요.</p>'}
+    ${s.lock.enabled ? `<p class="hint" style="margin-top:8px">앱을 다시 열 때 PIN을 물어봐요.</p>
+      <button class="btn block" style="margin-top:8px" data-action="lock-setup">🔁 PIN 바꾸기</button>` : '<p class="hint" style="margin-top:8px">PIN을 설정하면 앱을 다시 열 때 잠금화면이 나타나요. 이 기기의 브라우저 저장소를 완전히 대체하지는 않지만, 화면을 슬쩍 보는 것 정도는 막아줘요.</p>'}
+    <p class="hint" style="margin-top:8px">🔑 PIN을 잊어버렸다면? 이 화면에서 앱을 지울 수는 없으니, 백업 파일이 있다면 앱을 삭제 후 다시 설치해 백업을 가져오면서 PIN을 새로 설정하세요. 백업이 없다면 iOS 설정 앱에서 이 홈 화면 앱을 삭제한 뒤 다시 추가하면 데이터가 초기화되며 PIN도 새로 설정할 수 있어요(단, 백업 없이 지우면 기존 데이터는 복구할 수 없어요).</p>
   </section>
 
   <div class="section-label">💾 백업</div>
@@ -1351,6 +1617,7 @@ function viewSettings() {
   <section class="card" style="margin-top:8px">
     ${CATS.filter(c => c !== '기타').map(c => `<div class="target-row"><span>${CAT_EMO[c]} ${c}</span><input class="input num" inputmode="decimal" data-taxrate="${c}" value="${s.taxRates[c] ?? 0}" aria-label="${c} 세율 %"></div>`).join('')}
     <p class="hint" style="margin-top:6px">매도 제안 시 예상 세금·수수료를 계산하는 데 쓰는 근사 세율(%)이에요. 실제 세율은 보유기간·공제·개정 세법에 따라 달라질 수 있어요.</p>
+    <p class="small up" style="margin:6px 2px 0">⚠️ 원자재(금)를 실물(골드바 등)로 인출하면 이 세율과 별도로 부가가치세 10%가 붙을 수 있어요. 현금으로만 매도할 때는 해당되지 않아요.</p>
   </section>
 
   <div class="section-label">🗂️ 데이터</div>
@@ -1390,6 +1657,7 @@ function assetForm(a) {
       <label class="field"><span>목적</span><select class="input" id="f_purpose">${opts(PURPOSES, a.purpose, PURPOSE_EMO)}</select></label>
     </div>
     <div class="seg" id="f_modeSeg"><button type="button" data-m="qty" class="${a.mode === 'qty' ? 'on' : ''}">🔢 수량 × 가격</button><button type="button" data-m="amount" class="${a.mode === 'amount' ? 'on' : ''}">💵 금액으로</button></div>
+    <label class="check" id="residenceWrap" ${a.cat === '부동산' ? '' : 'hidden'}><input type="checkbox" id="f_residence" ${a.isResidence ? 'checked' : ''}> <span>🏠 자가 거주 목적 (투자 목적 아님) — 총자산엔 포함되고 표시만 구분돼요</span></label>
     <div id="m_qty" ${a.mode === 'qty' ? '' : 'hidden'}>
       <div class="row2">
         <label class="field"><span>시세 방식</span><select class="input" id="f_src">
@@ -1398,13 +1666,26 @@ function assetForm(a) {
           <option value="coingecko" ${a.src === 'coingecko' ? 'selected' : ''}>코인 자동</option></select></label>
         <label class="field"><span>통화</span><select class="input" id="f_cur"><option value="KRW" ${a.cur === 'KRW' ? 'selected' : ''}>원화</option><option value="USD" ${a.cur === 'USD' ? 'selected' : ''}>달러</option></select></label>
       </div>
-      <label class="field" id="symWrap" ${a.src === 'manual' ? 'hidden' : ''}><span id="symLabel">${a.src === 'coingecko' ? 'CoinGecko ID' : '티커'}</span><input class="input" id="f_symbol" autocapitalize="off" spellcheck="false" value="${esc(a.symbol)}" placeholder="${a.src === 'coingecko' ? 'bitcoin, ethereum' : 'VOO, QQQ, 005930:KRX'}"></label>
-      <p class="hint" id="symHint" ${a.src === 'manual' ? 'hidden' : ''}>${symHint(a.src)}</p>
+      <label class="field" id="symWrap" ${a.src === 'manual' ? 'hidden' : ''}><span id="symLabel">${a.src === 'coingecko' ? '코인 선택 (ID 자동 입력)' : '티커'}</span><input class="input" id="f_symbol" list="${a.src === 'coingecko' ? 'coinDatalist' : ''}" autocapitalize="off" spellcheck="false" value="${esc(a.symbol)}" placeholder="${a.src === 'coingecko' ? '목록에서 고르거나 ID 직접 입력 (예: bitcoin)' : 'VOO, QQQ, 005930:KRX'}"></label>
+      <datalist id="coinDatalist">${COINGECKO_COINS.map(([id, label]) => `<option value="${id}">${esc(label)}</option>`).join('')}</datalist>
+      <p class="hint" id="symHint" ${a.src === 'manual' ? 'hidden' : ''}>${symHint(a.src, a.cat)}</p>
       <div class="row2">
-        <label class="field"><span>보유 수량</span><input class="input num" inputmode="decimal" id="f_qty" value="${fmtInput(a.qty)}"></label>
-        <label class="field"><span>현재가</span><input class="input num" inputmode="decimal" id="f_price" value="${fmtInput(a.price)}"></label>
+        <label class="field"><span id="qtyLabel">보유 수량</span><input class="input num" inputmode="decimal" id="f_qty" value="${fmtInput(a.qty)}"></label>
+        <label class="field"><span id="priceLabel">현재가</span><input class="input num" inputmode="decimal" id="f_price" value="${fmtInput(a.price)}" ${a.src === 'coingecko' ? 'readonly' : ''}></label>
       </div>
-      <label class="field"><span>평균 매수단가</span><input class="input num" inputmode="decimal" id="f_avg" value="${fmtInput(a.avgCost)}"></label>
+      <div id="coinPriceRow" ${a.src === 'coingecko' ? '' : 'hidden'} style="display:flex;gap:10px;align-items:center;margin:-6px 0 4px;flex-wrap:wrap">
+        <button type="button" class="btn sm" id="f_priceFetch">🔄 지금 시세 가져오기</button>
+        <label class="check" style="margin:0"><input type="checkbox" id="f_priceManual"> <span class="small">✏️ 직접 입력으로 전환 (자동 실패 시)</span></label>
+      </div>
+      <p class="small muted" id="coinPriceAt" style="margin:-6px 0 10px">${a.src === 'coingecko' && a.priceAt ? `마지막 시세 조회: ${esc(a.priceAt)} 기준` : ''}</p>
+      <input type="hidden" id="f_priceAt" value="${esc(a.priceAt)}">
+      <label class="field" id="fxExposureWrap" ${a.cat === '해외주식' ? '' : 'hidden'}><span>환노출 여부 (선택, 권장)</span><select class="input" id="f_fxexp"><option value="">선택 안 함</option><option value="exposed" ${a.fxExposure === 'exposed' ? 'selected' : ''}>노출형 (환헤지 안 함)</option><option value="hedged" ${a.fxExposure === 'hedged' ? 'selected' : ''}>환헤지형</option></select></label>
+      <div class="row2" id="sectorCountryWrap" ${(a.cat === '국내주식' || a.cat === '해외주식') ? '' : 'hidden'}>
+        <label class="field"><span>섹터 (선택)</span><select class="input" id="f_sector"><option value="">미분류</option>${opts(SECTORS, a.sector)}</select></label>
+        <label class="field"><span>국가 (선택)</span><select class="input" id="f_country"><option value="">미분류</option>${opts(COUNTRIES, a.country)}</select></label>
+      </div>
+      <p class="hint" id="sectorCountryHint" ${(a.cat === '국내주식' || a.cat === '해외주식') ? '' : 'hidden'}>잘 알려진 종목은 이름·티커를 적으면 섹터·국가가 자동으로 채워져요. 처음 보는 종목은 직접 골라두시면 다음에 같은 이름으로 또 등록할 때 기억해서 채워드려요. 자산 화면에서 국내주식·해외주식을 보면 이 정보로 섹터별·국가별 구성을 볼 수 있어요.</p>
+      <label class="field"><span id="avgLabel">평균 매수단가</span><input class="input num" inputmode="decimal" id="f_avg" value="${fmtInput(a.avgCost)}"></label>
       <p class="hint">거래 탭에서 매수·매도를 기록하면 수량과 평균단가가 자동으로 바뀌어요.</p>
     </div>
     <div id="m_amount" ${a.mode === 'amount' ? '' : 'hidden'}>
@@ -1412,6 +1693,8 @@ function assetForm(a) {
         <label class="field"><span>현재 평가금액 (원)</span><input class="input num" inputmode="numeric" id="f_amount" value="${fmtInput(a.amount)}"></label>
         <label class="field"><span>원금 (선택)</span><input class="input num" inputmode="numeric" id="f_cost" value="${a.cost == null ? '' : fmtInput(a.cost)}" placeholder="비우면 손익 없음"></label>
       </div>
+      <label class="field"><span>납입 회차 (선택)</span><input class="input num" inputmode="numeric" id="f_paycount" value="${a.payCount == null ? '' : a.payCount}" placeholder="예: 34"></label>
+      <p class="hint">청약통장처럼 매달 납입할 때마다 회차가 있는 자산이면 적어두세요. 자동으로 올라가진 않고, 적은 숫자만 그대로 보여드려요 · ⚡ 빠르게 고치기에서 +1 체크로도 늘릴 수 있어요.</p>
       <div class="field"><span>🏦 예적금 정보</span>
         <div class="seg" id="d_kind" style="margin-bottom:10px">${[['none', '해당 없음'], ['deposit', '🏦 예금'], ['saving', '🐷 적금']].map(([k, l]) => `<button type="button" data-k="${k}" class="${a.dep.kind === k ? 'on' : ''}">${l}</button>`).join('')}</div>
       </div>
@@ -1421,6 +1704,8 @@ function assetForm(a) {
           <label class="field" id="d_mWrap"><span>월 납입액 (원)</span><input class="input num" inputmode="numeric" id="d_monthly" value="${fmtInput(a.dep.monthly)}"></label>
           <label class="field"><span>연 금리 (%)</span><input class="input num" inputmode="decimal" id="d_rate" value="${a.dep.rate || ''}" placeholder="예: 3.5"></label>
         </div>
+        <label class="field" id="d_manualWrap"><span>실제 납입 원금 직접 입력 (선택)</span><input class="input num" inputmode="numeric" id="d_manualpaid" value="${fmtInput(a.dep.manualPaid)}" placeholder="중간에 못 낸 달이 있으면 실제 낸 금액을 적어주세요"></label>
+        <p class="hint" id="d_manualHint" style="margin-top:-6px">비워두면 “월납입액 × 경과 개월수”로 자동 계산해요. 중간에 미납·연체가 있었다면 여기에 실제로 낸 원금 합계를 적으면 그 값을 우선 사용하고, 만기 예상액도 “직접 입력 원금 + 남은 개월수 × 월납입액”으로 다시 계산해요.</p>
         <div class="row2">
           <label class="field"><span>가입일</span><input class="input" type="date" id="d_start" value="${esc(a.dep.start)}"></label>
           <label class="field"><span>만기일</span><input class="input" type="date" id="d_end" value="${esc(a.dep.end)}"></label>
@@ -1448,13 +1733,24 @@ function assetForm(a) {
     const csum = comps.reduce((s, c) => s + c.pct, 0);
     if (comps.length && Math.abs(csum - 100) > 0.5) { toast(`구성 비중 합계가 ${nf2.format(csum)}%예요 (100% 필요)`); return false; }
     const src = val('f_src');
+    const catVal = val('f_cat');
+    const isGold = catVal === '원자재';
     const next = normAsset({
-      ...a, name, cat: val('f_cat'), purpose: val('f_purpose'), mode,
-      src: mode === 'qty' ? src : 'manual', cur: val('f_cur'), symbol: val('f_symbol').trim(),
+      ...a, name, cat: catVal, purpose: val('f_purpose'), mode,
+      src: mode === 'qty' ? src : 'manual',
+      cur: isGold ? 'KRW' : val('f_cur'),
+      symbol: (isGold && src === 'twelvedata') ? 'XAU/USD' : val('f_symbol').trim(),
+      priceAt: val('f_priceAt') || a.priceAt,
       qty: num(val('f_qty')), price: num(val('f_price')), avgCost: num(val('f_avg')),
       amount: num(val('f_amount')), cost: val('f_cost').trim() === '' ? null : num(val('f_cost')),
-      components: comps, memo: val('f_memo').trim(), dep: readDep()
+      components: comps, memo: val('f_memo').trim(), dep: readDep(),
+      payCount: val('f_paycount').trim() === '' ? null : num(val('f_paycount')),
+      isResidence: catVal === '부동산' && !!$sheetBody.querySelector('#f_residence')?.checked,
+      fxExposure: catVal === '해외주식' ? (val('f_fxexp') || '') : '',
+      sector: (catVal === '국내주식' || catVal === '해외주식') ? (val('f_sector') || '') : '',
+      country: (catVal === '국내주식' || catVal === '해외주식') ? (val('f_country') || '') : ''
     });
+    if ((catVal === '국내주식' || catVal === '해외주식') && (next.sector || next.country)) rememberStockMeta(next.name, next.symbol, next.sector, next.country);
     if (mode === 'amount' && next.dep.kind !== 'none') {
       if (!next.dep.start || !next.dep.end || next.dep.end <= next.dep.start) { toast('가입일과 만기일을 확인해 주세요'); return false; }
       if (next.dep.kind === 'deposit' ? !next.dep.principal : !next.dep.monthly) { toast(next.dep.kind === 'deposit' ? '예치 원금을 입력하세요' : '월 납입액을 입력하세요'); return false; }
@@ -1474,24 +1770,70 @@ function assetForm(a) {
     $sheetBody.querySelector('#m_qty').hidden = b.dataset.m !== 'qty';
     $sheetBody.querySelector('#m_amount').hidden = b.dataset.m !== 'amount';
   });
+  const coinStamp = () => new Date().toLocaleString('ko-KR', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+  const applyCoinPriceMode = () => {
+    const isCoin = val('f_src') === 'coingecko';
+    $sheetBody.querySelector('#coinPriceRow').hidden = !isCoin;
+    const manualOn = !!$sheetBody.querySelector('#f_priceManual')?.checked;
+    $sheetBody.querySelector('#f_price').readOnly = isCoin && !manualOn;
+    if (isCoin) $sheetBody.querySelector('#f_symbol').setAttribute('list', 'coinDatalist');
+    else $sheetBody.querySelector('#f_symbol').removeAttribute('list');
+    if (!isCoin) $sheetBody.querySelector('#coinPriceAt').textContent = '';
+  };
+  const fetchCoinNow = async auto => {
+    if (val('f_src') !== 'coingecko') return;
+    const id = val('f_symbol').trim();
+    if (!id) { if (!auto) toast('코인을 선택하거나 ID를 입력하세요'); return; }
+    const btn = $sheetBody.querySelector('#f_priceFetch');
+    btn.disabled = true;
+    try {
+      const p = await fetchCoinPrice(id);
+      $sheetBody.querySelector('#f_price').value = fmtInput(p);
+      const stamp = coinStamp();
+      $sheetBody.querySelector('#coinPriceAt').textContent = `마지막 시세 조회: ${stamp} 기준`;
+      $sheetBody.querySelector('#f_priceAt').value = stamp;
+      const manualCk = $sheetBody.querySelector('#f_priceManual'); manualCk.checked = false;
+      $sheetBody.querySelector('#f_price').readOnly = true;
+      if (!auto) toast('시세를 가져왔어요 🔄');
+    } catch (e) {
+      $sheetBody.querySelector('#coinPriceAt').textContent = '자동 조회 실패 — 직접 입력을 이용해 주세요';
+      $sheetBody.querySelector('#f_priceManual').checked = true;
+      $sheetBody.querySelector('#f_price').readOnly = false;
+      if (!auto) toast('시세를 가져오지 못했어요: ' + e.message);
+    } finally { btn.disabled = false; }
+  };
   $sheetBody.querySelector('#f_src').addEventListener('change', e => {
     const v = e.target.value;
     $sheetBody.querySelector('#symWrap').hidden = v === 'manual';
     $sheetBody.querySelector('#symHint').hidden = v === 'manual';
-    $sheetBody.querySelector('#symLabel').textContent = v === 'coingecko' ? 'CoinGecko ID' : '티커';
-    $sheetBody.querySelector('#f_symbol').placeholder = v === 'coingecko' ? 'bitcoin, ethereum' : 'VOO, QQQ, 005930:KRX';
-    $sheetBody.querySelector('#symHint').textContent = symHint(v);
+    $sheetBody.querySelector('#symLabel').textContent = v === 'coingecko' ? '코인 선택 (ID 자동 입력)' : '티커';
+    $sheetBody.querySelector('#f_symbol').placeholder = v === 'coingecko' ? '목록에서 고르거나 ID 직접 입력 (예: bitcoin)' : 'VOO, QQQ, 005930:KRX';
+    $sheetBody.querySelector('#symHint').textContent = symHint(v, val('f_cat'));
     if (v === 'coingecko') $sheetBody.querySelector('#f_cur').value = 'KRW';
+    applyCoinPriceMode();
+    if (v === 'coingecko' && val('f_symbol').trim()) fetchCoinNow(true);
+    syncGoldUI();
   });
-  const readDep = () => normDep({ kind: $sheetBody.querySelector('#d_kind .on').dataset.k, rate: val('d_rate'), start: val('d_start'), end: val('d_end'), principal: val('d_principal'), monthly: val('d_monthly'), interest: val('d_interest'), tax: val('d_tax') });
+  $sheetBody.querySelector('#f_symbol').addEventListener('change', () => { if (val('f_src') === 'coingecko') fetchCoinNow(true); autoFillSectorCountry(); });
+  $sheetBody.querySelector('#f_name').addEventListener('change', autoFillSectorCountry);
+  $sheetBody.querySelector('#f_priceFetch').addEventListener('click', () => fetchCoinNow(false));
+  $sheetBody.querySelector('#f_priceManual').addEventListener('change', e => {
+    $sheetBody.querySelector('#f_price').readOnly = val('f_src') === 'coingecko' && !e.target.checked;
+    if (!e.target.checked) fetchCoinNow(true);
+  });
+  applyCoinPriceMode();
+  const readDep = () => normDep({ kind: $sheetBody.querySelector('#d_kind .on').dataset.k, rate: val('d_rate'), start: val('d_start'), end: val('d_end'), principal: val('d_principal'), monthly: val('d_monthly'), manualPaid: val('d_manualpaid'), interest: val('d_interest'), tax: val('d_tax') });
   const drawDep = () => {
     const d = readDep();
     $sheetBody.querySelector('#d_box').hidden = d.kind === 'none';
     $sheetBody.querySelector('#d_pWrap').hidden = d.kind !== 'deposit';
     $sheetBody.querySelector('#d_mWrap').hidden = d.kind !== 'saving';
+    $sheetBody.querySelector('#d_manualWrap').hidden = d.kind !== 'saving';
+    $sheetBody.querySelector('#d_manualHint').hidden = d.kind !== 'saving';
     $sheetBody.querySelectorAll('#m_amount > .row2:first-child .field').forEach(f => f.style.opacity = d.kind === 'none' ? '' : '.45');
     const di = depInfo({ dep: d });
-    $sheetBody.querySelector('#d_preview').innerHTML = di ? `${E('🎁')}<span>${di.n}개월 뒤 <b class="num">${won(di.maturity)}</b> 받아요<br><span class="small muted">원금 ${won(di.principalTotal)} + 이자 ${won(di.interest)} − 세금 ${won(di.tax)} · ${ddayLabel(di.dday)}</span></span>` : `${E('✏️')}<span class="small muted">금리·가입일·만기일을 적으면 만기 금액이 나와요</span>`;
+    const diffLine = di && di.hasManual && di.paidDiff !== 0 ? `<div class="small ${di.paidDiff > 0 ? 'up' : 'down'}" style="margin-top:4px">⚠️ 자동계산과 ${won(Math.abs(di.paidDiff))} 차이가 있어 직접 입력값을 사용 중이에요</div>` : '';
+    $sheetBody.querySelector('#d_preview').innerHTML = di ? `${E('🎁')}<span>${di.n}개월 뒤 <b class="num">${won(di.maturity)}</b> 받아요<br><span class="small muted">원금 ${won(di.principalTotal)} + 이자 ${won(di.interest)} − 세금 ${won(di.tax)} · ${ddayLabel(di.dday)}</span>${diffLine}</span>` : `${E('✏️')}<span class="small muted">금리·가입일·만기일을 적으면 만기 금액이 나와요</span>`;
   };
   $sheetBody.querySelector('#d_kind').addEventListener('click', ev => {
     const b = ev.target.closest('button'); if (!b) return;
@@ -1509,16 +1851,49 @@ function assetForm(a) {
   $sheetBody.querySelector('#d_box').addEventListener('input', drawDep);
   $sheetBody.querySelector('#d_box').addEventListener('change', drawDep);
   $sheetBody.querySelector('#f_cat').addEventListener('change', ev => {
-    if (ev.target.value === '현금·예금' && $sheetBody.querySelector('#f_modeSeg .on').dataset.m === 'qty') $sheetBody.querySelector('#f_modeSeg [data-m=amount]').click();
+    if (ev.target.value === '현금성자산' && $sheetBody.querySelector('#f_modeSeg .on').dataset.m === 'qty') $sheetBody.querySelector('#f_modeSeg [data-m=amount]').click();
+    syncGoldUI();
   });
   drawDep();
+  syncGoldUI();
   $sheetBody.querySelector('#addComp').addEventListener('click', () => {
     $sheetBody.querySelector('#compList').insertAdjacentHTML('beforeend', compRow({ name: '', pct: 0 }));
   });
   $sheetBody.querySelector('#compList').addEventListener('click', e => { if (e.target.closest('.x-btn')) e.target.closest('.comp-edit').remove(); });
 }
-function symHint(src) {
-  return src === 'coingecko' ? '코인 시세는 원화로 받아와요. ID는 coingecko.com 코인 페이지 주소의 영문 이름이에요 (예: bitcoin).'
+function syncGoldUI() {
+  const cat = val('f_cat'), src = val('f_src');
+  const isGold = cat === '원자재';
+  const qtyLabel = $sheetBody.querySelector('#qtyLabel'), priceLabel = $sheetBody.querySelector('#priceLabel');
+  if (qtyLabel) qtyLabel.textContent = isGold ? '보유 수량 (그램)' : '보유 수량';
+  if (priceLabel) priceLabel.textContent = isGold ? '현재가 (원/그램)' : '현재가';
+  const curSel = $sheetBody.querySelector('#f_cur');
+  if (curSel) { if (isGold) { curSel.value = 'KRW'; curSel.disabled = true; } else curSel.disabled = false; }
+  const symEl = $sheetBody.querySelector('#f_symbol');
+  if (symEl) { if (isGold && src === 'twelvedata') { symEl.value = 'XAU/USD'; symEl.disabled = true; } else symEl.disabled = false; }
+  const resWrap = $sheetBody.querySelector('#residenceWrap');
+  if (resWrap) resWrap.hidden = cat !== '부동산';
+  const fxWrap = $sheetBody.querySelector('#fxExposureWrap');
+  if (fxWrap) fxWrap.hidden = cat !== '해외주식';
+  const isStock = cat === '국내주식' || cat === '해외주식';
+  const scWrap = $sheetBody.querySelector('#sectorCountryWrap'), scHint = $sheetBody.querySelector('#sectorCountryHint');
+  if (scWrap) scWrap.hidden = !isStock;
+  if (scHint) scHint.hidden = !isStock;
+  if (isStock) autoFillSectorCountry();
+}
+/* 이름·티커가 바뀔 때마다 섹터·국가 자동 매칭을 시도함 — 사용자가 이미 직접 고른 값은 덮어쓰지 않음 */
+function autoFillSectorCountry() {
+  const sectorEl = $sheetBody.querySelector('#f_sector'), countryEl = $sheetBody.querySelector('#f_country');
+  if (!sectorEl || !countryEl) return;
+  if (sectorEl.value || countryEl.value) return;
+  const meta = lookupStockMeta(val('f_name'), val('f_symbol'));
+  if (!meta) return;
+  if (meta.sector) sectorEl.value = meta.sector;
+  if (meta.country) countryEl.value = meta.country;
+}
+function symHint(src, cat) {
+  if (cat === '원자재' && src === 'twelvedata') return '국제 금 시세(XAU/USD, 트로이온스당 달러)를 가져와 환율로 원/그램으로 환산해요. 무료 요금제에서는 상품(commodity) 시세가 안 나올 수 있어요 — 그럴 땐 "직접 입력"을 이용하세요.';
+  return src === 'coingecko' ? '목록에 있는 코인은 이름만 고르면 ID·시세가 자동으로 들어가요. 목록에 없으면 coingecko.com 코인 페이지 주소의 영문 이름을 직접 입력하세요 (예: bitcoin). 현재가 칸은 자동으로 채워지고 직접 수정하려면 아래 "직접 입력으로 전환"을 켜세요.'
     : '미국 주식·ETF는 티커만(VOO), 해외 거래소는 티커:거래소 형식이에요. 국내 종목은 무료 키에서 지원되지 않을 수 있어 “직접 입력”을 권장해요.';
 }
 function compRow(c) {
@@ -1570,7 +1945,7 @@ function txForm(t) {
       f.innerHTML = `<div class="row2"><label class="field"><span>받은 금액 (세후)</span><input class="input num" inputmode="decimal" id="t_amount"></label>
         <label class="field"><span>통화</span><select class="input" id="t_cur"><option value="KRW">원화</option><option value="USD" ${a.cur === 'USD' ? 'selected' : ''}>달러</option></select></label></div>
         <label class="check"><input type="checkbox" id="t_reinvest_new"> <span>🔁 배당 재투자함</span></label>
-        <p class="hint">달러는 현재 환율로 원화 환산해 저장해요.</p>`;
+        <p class="hint">달러는 현재 환율로 원화 환산해 저장해요. 📈 주식·ETF·펀드 등 투자자산에서 받은 배당만 여기 적어주세요. 🏦 예금·적금·파킹통장 이자는 가계부 탭의 "이자수입(예금·적금)"에서 관리해요.</p>`;
     } else if (a.mode === 'amount') {
       f.innerHTML = `<label class="field"><span>${type === 'buy' ? '넣은' : '뺀'} 금액 (원)</span><input class="input num" inputmode="numeric" id="t_amount"></label>
         <p class="hint">금액형 자산은 평가금액과 원금에 ${type === 'buy' ? '더해져요' : '비례해 빠져요'}.</p>`;
@@ -1580,7 +1955,7 @@ function txForm(t) {
         <div class="row2">
           <label class="field" id="t_qtyWrap"><span>수량</span><input class="input num" inputmode="decimal" id="t_qty"></label>
           <label class="field" id="t_amtWrap" hidden><span>${type === 'buy' ? '매수' : '매도'} 금액 (${u})</span><input class="input num" inputmode="decimal" id="t_amt2" placeholder="예: 500000"></label>
-          <label class="field"><span>단가 (${u})</span><input class="input num" inputmode="decimal" id="t_price" value="${fmtInput(a.price)}"></label>
+          <label class="field"><span>단가 (${u}${a.cat === '원자재' ? '/g' : ''})</span><input class="input num" inputmode="decimal" id="t_price" value="${fmtInput(a.price)}"></label>
         </div>
         <label class="field"><span>수수료·세금 (${u}, 선택)</span><input class="input num" inputmode="decimal" id="t_fee"></label>
         <p class="hint">현재 보유 ${nf6.format(a.qty)}주 · 평균단가 ${a.cur === 'USD' ? '$' + nf2.format(a.avgCost) : won(a.avgCost)} · 금액으로 입력하면 단가 기준 수량이 자동 계산돼요</p>`;
@@ -1721,10 +2096,14 @@ function goalForm(id) {
   const html = `
     <label class="field"><span>목표 이름</span><input class="input" id="g_name" value="${esc(g.name)}" placeholder="예: 주택자금, 비상금, 은퇴자금"></label>
     <label class="field"><span>집계할 목적 태그</span><select class="input" id="g_purpose">${opts(PURPOSES, g.purpose, PURPOSE_EMO)}</select></label>
+    <div class="field"><span>아이콘</span>
+      <div class="chips" id="g_icons">${GOAL_ICONS.map(ic => `<button type="button" class="chip ${ic === goalIcon(g) ? 'on' : ''}" data-ic="${ic}" style="font-size:18px;padding:6px 11px">${ic}</button>`).join('')}</div>
+    </div>
+    <p class="hint">목적 태그를 고르면 어울리는 아이콘이 먼저 골라져요. 마음에 드는 걸로 직접 바꿔도 돼요.</p>
     <div class="field"><span>포함할 자산 분류 (선택, 비우면 목적 태그 전체)</span>
       <div class="chips" id="g_cats">${CATS.map(c => `<button type="button" class="chip ${g.cats.includes(c) ? 'on' : ''}" data-c="${c}">${CAT_EMO[c]} ${c}</button>`).join('')}</div>
     </div>
-    <p class="hint">예: 주택자금 목표는 현금·예금·채권만, 은퇴자금은 IRP·주식·ETF만 포함하도록 좁힐 수 있어요.</p>
+    <p class="hint">예: 주택자금 목표는 현금성자산·채권만, 은퇴자금은 IRP·주식·ETF만 포함하도록 좁힐 수 있어요.</p>
     <div class="row2">
       <label class="field"><span>목표 시점</span><input class="input" type="month" id="g_date" value="${esc(g.date)}"></label>
       <label class="field"><span>목표 총액 (원)</span><input class="input num" inputmode="numeric" id="g_amount" value="${fmtInput(g.amount)}"></label>
@@ -1736,12 +2115,24 @@ function goalForm(id) {
     ${isNew ? '' : `<button class="btn danger block" data-action="goal-del" data-id="${g.id}">🗑️ 이 목표 지우기</button>`}`;
   openSheet(isNew ? '🎯 목표 만들기' : '✏️ 목표 고치기', html, () => {
     const cats = [...$sheetBody.querySelectorAll('#g_cats .chip.on')].map(x => x.dataset.c);
-    const next = normGoal({ ...g, name: val('g_name').trim() || '목표', purpose: val('g_purpose'), cats, date: val('g_date'), amount: num(val('g_amount')), monthly: num(val('g_monthly')), priority: num(val('g_priority')) || 1 });
+    const iconEl = $sheetBody.querySelector('#g_icons .chip.on');
+    const next = normGoal({ ...g, name: val('g_name').trim() || '목표', purpose: val('g_purpose'), icon: iconEl ? iconEl.dataset.ic : '', cats, date: val('g_date'), amount: num(val('g_amount')), monthly: num(val('g_monthly')), priority: num(val('g_priority')) || 1 });
     if (isNew) S.settings.goals.push(next); else S.settings.goals[S.settings.goals.findIndex(x => x.id === g.id)] = next;
     save(); render(); toast('저장했어요 ✨');
   });
   $sheetBody.querySelector('#g_cats').addEventListener('click', e => {
     const b = e.target.closest('.chip'); if (!b) return; b.classList.toggle('on');
+  });
+  let iconTouched = false;
+  $sheetBody.querySelector('#g_icons').addEventListener('click', e => {
+    const b = e.target.closest('.chip'); if (!b) return;
+    iconTouched = true;
+    $sheetBody.querySelectorAll('#g_icons .chip').forEach(x => x.classList.toggle('on', x === b));
+  });
+  $sheetBody.querySelector('#g_purpose').addEventListener('change', () => {
+    if (iconTouched) return;
+    const def = GOAL_DEFAULT_ICON[val('g_purpose')] || '🎯';
+    $sheetBody.querySelectorAll('#g_icons .chip').forEach(x => x.classList.toggle('on', x.dataset.ic === def));
   });
 }
 
@@ -1750,6 +2141,15 @@ async function fetchJSON(url, ms = 12000) {
   const ctl = new AbortController(); const tm = setTimeout(() => ctl.abort(), ms);
   try { const r = await fetch(url, { signal: ctl.signal, cache: 'no-store' }); if (!r.ok) throw new Error('HTTP ' + r.status); return await r.json(); }
   finally { clearTimeout(tm); }
+}
+/* 코인 자산 등록·수정 화면에서 "지금 바로" 1개 코인 시세만 가져올 때 씀 (전체 새로고침과 별개, 호출 1회) */
+async function fetchCoinPrice(id) {
+  const clean = String(id || '').trim().toLowerCase();
+  if (!clean) throw new Error('코인을 선택하거나 ID를 입력하세요');
+  const d = await fetchJSON('https://api.coingecko.com/api/v3/simple/price?vs_currencies=krw&ids=' + encodeURIComponent(clean));
+  const p = d[clean] && d[clean].krw;
+  if (!p) throw new Error(`ID "${clean}"의 시세를 찾지 못했어요`);
+  return p;
 }
 let refreshing = false;
 async function refreshPrices(auto = false) {
@@ -1800,7 +2200,16 @@ async function refreshPrices(auto = false) {
             else errs.push(`${sym}: ${d && d.message ? d.message.slice(0, 80) : '가격 없음'}`);
           } catch (e) { errs.push(`${sym}: ${e.message}`); }
         }
-        for (const a of stocks) { const p = prices[a.symbol.toUpperCase()]; if (p) { a.price = p; a.priceAt = stamp; ok++; } }
+        const GRAMS_PER_OZ = 31.1034768;
+        for (const a of stocks) {
+          const p = prices[a.symbol.toUpperCase()]; if (!p) continue;
+          if (a.cat === '원자재') {
+            const fx = fxRate('USD');
+            if (!fx) { errs.push('금: 환율이 없어 원/그램으로 환산하지 못했어요. 잠시 후 다시 눌러 주세요'); continue; }
+            a.price = p / GRAMS_PER_OZ * fx;
+          } else a.price = p;
+          a.priceAt = stamp; ok++;
+        }
       }
     }
     if (ok) S.settings.priceRefreshedAt = Date.now();
@@ -1821,7 +2230,7 @@ function autoRefreshIfStale() {
 
 /* ───────── P0: 암호화·잠금 (Web Crypto) ─────────
  * iOS 웹앱은 시스템 Keychain에 직접 접근할 수 없어서, 대신 (1) 백업 파일을
- * 비밀번호로 암호화하고 (2) 앱 자체에 PIN/생체인증 잠금화면을 둬서 같은 목적을 달성해요.
+ * 비밀번호로 암호화하고 (2) 앱 자체에 PIN 잠금화면을 둬서 같은 목적을 달성해요.
  */
 function b64(buf) { return btoa(String.fromCharCode(...new Uint8Array(buf))); }
 function unb64(s) { return Uint8Array.from(atob(s), c => c.charCodeAt(0)); }
@@ -1849,30 +2258,9 @@ async function setPin(pin) {
   S.settings.lock.salt = salt; S.settings.lock.pinHash = await sha256Hex(pin + ':' + salt); S.settings.lock.enabled = true; save();
 }
 async function verifyPin(pin) { return pin && (await sha256Hex(pin + ':' + S.settings.lock.salt)) === S.settings.lock.pinHash; }
-async function registerBiometric() {
-  if (!window.PublicKeyCredential) { toast('이 기기·브라우저는 생체인증을 지원하지 않아요'); return; }
-  try {
-    const cred = await navigator.credentials.create({ publicKey: {
-      challenge: crypto.getRandomValues(new Uint8Array(32)),
-      rp: { name: '자산 일기 테스트판' },
-      user: { id: crypto.getRandomValues(new Uint8Array(16)), name: 'user', displayName: '내 자산' },
-      pubKeyCredParams: [{ type: 'public-key', alg: -7 }, { type: 'public-key', alg: -257 }],
-      authenticatorSelection: { authenticatorAttachment: 'platform', userVerification: 'required' },
-      timeout: 60000
-    } });
-    S.settings.lock.webauthnId = b64(cred.rawId); save(); render(); toast('생체인증을 등록했어요 🔐');
-  } catch (e) { toast('등록 실패: ' + (e.message || e)); }
-}
-async function verifyBiometric() {
-  try {
-    await navigator.credentials.get({ publicKey: { challenge: crypto.getRandomValues(new Uint8Array(32)), allowCredentials: [{ id: unb64(S.settings.lock.webauthnId), type: 'public-key' }], userVerification: 'required', timeout: 60000 } });
-    return true;
-  } catch (e) { return false; }
-}
 let appUnlocked = false;
 function renderLockScreen() {
   const ls = document.getElementById('lockScreen');
-  const hasBio = !!S.settings.lock.webauthnId && window.PublicKeyCredential;
   ls.innerHTML = `<div class="lock-card">
     <div class="big-emo emo" style="font-size:48px;text-align:center;display:block">🔒</div>
     <h2 style="text-align:center;margin:8px 0 4px">잠겨 있어요</h2>
@@ -1880,12 +2268,10 @@ function renderLockScreen() {
     <input class="input" id="lockPin" type="password" inputmode="numeric" maxlength="6" placeholder="PIN" style="text-align:center;font-size:22px;letter-spacing:8px">
     <div id="lockErr" class="small up" style="text-align:center;min-height:18px;margin-top:6px"></div>
     <button class="btn primary block" id="lockSubmit" style="margin-top:10px">잠금 해제</button>
-    ${hasBio ? `<button class="btn block" id="lockBio" style="margin-top:8px">🫆 생체인증으로 열기</button>` : ''}
   </div>`;
   const tryPin = async () => { const pin = document.getElementById('lockPin').value; if (await verifyPin(pin)) unlockApp(); else document.getElementById('lockErr').textContent = 'PIN이 달라요'; };
   document.getElementById('lockSubmit').addEventListener('click', tryPin);
   document.getElementById('lockPin').addEventListener('keydown', e => { if (e.key === 'Enter') tryPin(); });
-  if (hasBio) document.getElementById('lockBio').addEventListener('click', async () => { if (await verifyBiometric()) unlockApp(); else document.getElementById('lockErr').textContent = '생체인증에 실패했어요'; });
 }
 function unlockApp() { appUnlocked = true; document.getElementById('lockScreen').hidden = true; runAutoTasks(); render(); }
 function checkLock() {
@@ -1983,6 +2369,13 @@ document.addEventListener('click', e => {
   switch (act) {
     case 'go': ui.tab = el.dataset.tab; render(); window.scrollTo(0, 0); break;
     case 'refresh-prices': refreshPrices(); break;
+    case 'return-guide': { // 다시 그리지 않고 제자리에서 열고 닫아야 짧은 애니메이션이 보임. 상태는 ui에 기억해서 다른 탭 다녀와도 유지
+      const open = el.getAttribute('aria-expanded') !== 'true';
+      ui.returnGuideOpen = open; el.setAttribute('aria-expanded', String(open));
+      const panel = document.getElementById(el.getAttribute('aria-controls'));
+      if (panel) { panel.classList.toggle('open', open); panel.inert = !open; }
+      break;
+    }
     case 'close-sheet': closeSheet(); break;
     case 'edit-asset': assetForm(S.assets.find(a => a.id === id)); break;
     case 'toggle-comp': e.stopPropagation(); ui.open[id] = !ui.open[id]; render(); break;
@@ -2040,13 +2433,13 @@ document.addEventListener('click', e => {
       S.settings.targets = next; ui.gapRelative = false; save(); render(); toast('목표 비중을 보유 자산 기준으로 바꿨어요 🎯'); break;
     }
     case 'gap-relative': ui.gapRelative = !ui.gapRelative; render(); break;
+    case 'subchart-view': ui.subChartView[el.dataset.cat] = el.dataset.v; render(); break;
     case 'theme': S.settings.theme = el.dataset.v; save(); render(); break;
     case 'save-api': S.settings.twelveKey = document.getElementById('twelveKey').value.trim(); S.settings.fxManual = num(document.getElementById('fxManual').value); S.settings.claudeKey = document.getElementById('claudeKey').value.trim(); S.settings.claudeModel = document.getElementById('claudeModel').value.trim() || DEFAULT_MODEL; save(); render(); toast('저장했어요 ✨'); break;
     case 'export': exportBackup(); break;
     case 'import': document.getElementById('importFile').click(); break;
     case 'lock-setup': pinSetupForm(); break;
-    case 'lock-off': if (confirm('앱 잠금을 끌까요?')) { S.settings.lock = { enabled: false, pinHash: '', salt: '', webauthnId: '' }; save(); render(); toast('잠금을 껐어요 🔓'); } break;
-    case 'lock-bio-register': registerBiometric(); break;
+    case 'lock-off': if (confirm('앱 잠금을 끌까요?')) { S.settings.lock = { enabled: false, pinHash: '', salt: '' }; save(); render(); toast('잠금을 껐어요 🔓'); } break;
     case 'reset-all':
       if (confirm('모든 자산·거래·가계부·일기·설정을 지울까요? 되돌릴 수 없어요.') && confirm('정말 지울까요? 먼저 백업을 권장해요.')) { S = defaultState(); save(); render(); toast('새 일기장이 되었어요 📔'); }
       break;
@@ -2059,6 +2452,7 @@ $app.addEventListener('change', e => {
   if (t.dataset.target) { S.settings.targets[t.dataset.target] = num(t.value); save(); render(); }
   else if (t.dataset.taxrate) { S.settings.taxRates[t.dataset.taxrate] = num(t.value); save(); render(); }
   else if (t.hasAttribute('data-band')) { S.settings.band = Math.max(0, num(t.value)); save(); render(); }
+  else if (t.hasAttribute('data-targetreturn')) { S.settings.targetReturnRate = Math.max(0, num(t.value)); save(); render(); }
   else if (t.hasAttribute('data-extra')) { ui.extra = num(t.value); render(); }
 });
 $app.addEventListener('keydown', e => { if (e.key === 'Enter' && e.target.matches('input')) e.target.blur(); });
