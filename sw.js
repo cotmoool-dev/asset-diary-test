@@ -6,7 +6,7 @@
  * Unauthorized copying, modification, redistribution, or commercial use is prohibited.
  */
 // 앱 화면 파일과 글꼴을 캐시해서 오프라인에서도 열리게 함. 시세 API는 캐시하지 않음.
-const CACHE = 'asset-diary-test-v1.26.0';
+const CACHE = 'asset-diary-test-v1.28.0';
 // 같은 GitHub 계정(같은 주소)에 올린 다른 버전 앱의 캐시를 지우지 않도록, 이 앱 이름으로 시작하는 옛 캐시만 정리
 // (17차에서 한 번 고쳤던 부분인데 이후 작업본에 다시 반영이 안 돼 있던 걸 20차 후속에서 재적용함)
 const CACHE_PREFIX = 'asset-diary-test-';
