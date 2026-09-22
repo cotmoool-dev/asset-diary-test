@@ -16,7 +16,7 @@
  * 테스트버전: Perplexity 리뷰 반영판. 실제 데이터와 분리하기 위해 저장 키를 다르게 씀.
  */
 const STORE_KEY = 'myAssets.v4.test';
-const APP_BUILD = 'v1.24.0'; // sw.js의 CACHE 버전과 항상 맞춰서 올릴 것 — 설정 화면에 그대로 노출해서, 실제 폰에 반영된 버전을 화면 캡처 하나로 바로 확인할 수 있게 함
+const APP_BUILD = 'v1.25.0'; // sw.js의 CACHE 버전과 항상 맞춰서 올릴 것 — 설정 화면에 그대로 노출해서, 실제 폰에 반영된 버전을 화면 캡처 하나로 바로 확인할 수 있게 함
 const APP_VERSION_LABEL = '자산 일기 테스트판 · Perplexity 리뷰 반영';
 /* 리밸런싱 세금·수수료 근사치(설정에서 조정 가능). 실제 세율은 보유기간·공제·상품에 따라 달라요. */
 const DEFAULT_TAX_RATES = {
@@ -2202,6 +2202,7 @@ function assetForm(a, draftOverride) {
           <option value="coingecko" ${a.src === 'coingecko' ? 'selected' : ''}>코인 자동</option></select></label>
         <label class="field"><span>통화</span><select class="input" id="f_cur"><option value="KRW" ${a.cur === 'KRW' ? 'selected' : ''}>원화</option><option value="USD" ${a.cur === 'USD' ? 'selected' : ''}>달러</option></select></label>
       </div>
+      <p class="hint" id="srcHint">자동으로 두면 새로고침(🔄)할 때 시세를 받아와요. 국내주식·ETF·미국주식·금은 키 없이 무료예요.</p>
       <label class="field" id="symWrap" ${a.src === 'manual' ? 'hidden' : ''}><span id="symLabel">${a.src === 'coingecko' ? '코인 선택 (ID 자동 입력)' : '티커'}</span><input class="input" id="f_symbol" list="${a.src === 'coingecko' ? 'coinDatalist' : ''}" autocapitalize="off" spellcheck="false" value="${esc(a.symbol)}" placeholder="${a.src === 'coingecko' ? '목록에서 고르거나 ID 직접 입력 (예: bitcoin)' : '005930, VOO, QQQ'}"></label>
       <datalist id="coinDatalist">${COINGECKO_COINS.map(([id, label]) => `<option value="${id}">${esc(label)}</option>`).join('')}</datalist>
       <p class="hint" id="symHint" ${a.src === 'manual' ? 'hidden' : ''}>${symHint(a.src, a.cat)}</p>
@@ -2450,6 +2451,12 @@ function syncGoldUI() {
   if (curSel) { if (isGold) { curSel.value = 'KRW'; curSel.disabled = true; } else curSel.disabled = false; }
   const symEl = $sheetBody.querySelector('#f_symbol');
   if (symEl) { if (isGold && src === 'twelvedata') { symEl.value = 'XAU/USD'; symEl.disabled = true; } else symEl.disabled = false; }
+  /* 금은 종목코드로 찾는 게 아니라 금 시세 한 줄을 그대로 쓰므로, 티커 칸을 숨기고
+     선택지 이름도 '금 시세 자동'으로 바꿔 줍니다(주식 얘기처럼 보이지 않도록). */
+  const autoOpt = $sheetBody.querySelector('#f_src option[value="twelvedata"]');
+  if (autoOpt) autoOpt.textContent = isGold ? '금 시세 자동' : '주식·ETF 자동';
+  const symWrapEl = $sheetBody.querySelector('#symWrap');
+  if (symWrapEl && isGold) symWrapEl.hidden = true;
   const resWrap = $sheetBody.querySelector('#residenceWrap');
   if (resWrap) resWrap.hidden = cat !== '부동산';
   const fxWrap = $sheetBody.querySelector('#fxExposureWrap');
@@ -2488,7 +2495,7 @@ function autoFillPensionProduct() {
   el.dataset.auto = guess;
 }
 function symHint(src, cat) {
-  if (cat === '원자재' && src === 'twelvedata') return '국제 금 시세(XAU/USD, 트로이온스당 달러)를 가져와 환율로 원/그램으로 환산해요. 무료 요금제에서는 상품(commodity) 시세가 안 나올 수 있어요 — 그럴 땐 "직접 입력"을 이용하세요.';
+  if (cat === '원자재' && src === 'twelvedata') return '무료 시세 서버에서 금 1그램당 원화 가격을 받아와요. 국제 금시세를 환산한 값이라 KRX 금시장 종가와는 조금 차이가 있을 수 있어요.';
   return src === 'coingecko' ? '목록에 있는 코인은 이름만 고르면 ID·시세가 자동으로 들어가요. 목록에 없으면 coingecko.com 코인 페이지 주소의 영문 이름을 직접 입력하세요 (예: bitcoin). 현재가 칸은 자동으로 채워지고 직접 수정하려면 아래 "직접 입력으로 전환"을 켜세요.'
     : '국내 종목은 6자리 코드(005930), 미국 주식·ETF는 티커(VOO)만 넣으면 무료 시세 서버에서 자동으로 받아와요 — 키가 없어도 돼요. 그 밖의 해외 거래소는 티커:거래소 형식이고, 이때만 Twelve Data 키가 필요해요.';
 }
@@ -2848,6 +2855,12 @@ function lookupFeedPrice(feed, symbol) {
   const p = Number(feed.us && feed.us[raw.replace(/\./g, '-')]);   // BRK.B ↔ BRK-B 표기 차이 흡수
   return isFinite(p) && p > 0 ? { price: p, cur: 'USD' } : null;
 }
+/* prices.json의 금 시세를 꺼냅니다. 이미 '원/그램' 단위라서 환율·온스 환산이 필요 없습니다.
+ * 값이 없으면 null을 돌려주고, 기존 Twelve Data(XAU/USD) 경로로 넘어갑니다. */
+function lookupFeedGold(feed) {
+  const p = Number(feed && feed.gold_krx && feed.gold_krx.price_per_g);
+  return isFinite(p) && p > 0 ? { price: p, cur: 'KRW' } : null;
+}
 /* 코인 자산 등록·수정 화면에서 "지금 바로" 1개 코인 시세만 가져올 때 씀 (전체 새로고침과 별개, 호출 1회) */
 async function fetchCoinPrice(id) {
   const clean = String(id || '').trim().toLowerCase();
@@ -2891,16 +2904,15 @@ async function refreshPrices(auto = false) {
     // 주식·ETF — ① 무료 시세 서버(prices.json)에서 먼저 찾고, ② 거기 없는 종목만 Twelve Data로
     const stocks = S.assets.filter(a => a.mode === 'qty' && a.src === 'twelvedata' && a.symbol);
     if (stocks.length) {
-      // ① 공개 JSON 한 번만 받아옵니다(키 불필요·종목 수 제한 없음). 금은 목록에 없어 건너뜁니다.
+      // ① 공개 JSON 한 번만 받아옵니다(키 불필요·종목 수 제한 없음). 금 시세도 여기 들어 있습니다.
       let feed = null;
-      if (stocks.some(a => a.cat !== '원자재')) {
-        try { feed = await fetchJSON(PRICES_JSON_URL); }
-        catch (e) { errs.push('무료 시세 서버: ' + e.message); }
-      }
+      try { feed = await fetchJSON(PRICES_JSON_URL); }
+      catch (e) { errs.push('무료 시세 서버: ' + e.message); }
       const feedStamp = (feed && feed.date) ? feed.date + ' 종가' : stamp;
       const leftovers = [];
       for (const a of stocks) {
-        const hit = (a.cat === '원자재') ? null : lookupFeedPrice(feed, a.symbol);
+        // 금은 원/그램으로 바로 내려오고, 주식·ETF는 종목코드/티커로 찾습니다.
+        const hit = (a.cat === '원자재') ? lookupFeedGold(feed) : lookupFeedPrice(feed, a.symbol);
         if (!hit) { leftovers.push(a); continue; }
         /* 통화는 시세 출처에 맞춰 덮어씁니다 — 국내주식은 원, 해외주식은 달러로 내려오는데
            자산에 설정된 통화가 이와 다르면 평가액이 크게 어긋나기 때문입니다. */
