@@ -1,6 +1,14 @@
+/*
+ * Asset Note
+ * Copyright © 2026 cotmoool-dev. All rights reserved.
+ *
+ * This project is proprietary software.
+ * Unauthorized copying, modification, redistribution, or commercial use is prohibited.
+ */
 /* 내 자산 — 개인 자산 포트폴리오 PWA
  * 모든 데이터는 이 기기 브라우저(localStorage)에만 저장됩니다. 서버 전송 없음.
- * 외부 호출: 시세(CoinGecko, Twelve Data), 환율(Frankfurter) — 새로고침 버튼을 누를 때만.
+ * 외부 호출(새로고침 버튼을 누를 때만): 국내·해외주식 시세(GitHub에 공개된 prices.json),
+ *   코인 시세(CoinGecko), 금·그 밖의 해외 거래소 종목(Twelve Data), 환율(Frankfurter).
  */
 'use strict';
 
@@ -8,7 +16,7 @@
  * 테스트버전: Perplexity 리뷰 반영판. 실제 데이터와 분리하기 위해 저장 키를 다르게 씀.
  */
 const STORE_KEY = 'myAssets.v4.test';
-const APP_BUILD = 'v1.22.0'; // sw.js의 CACHE 버전과 항상 맞춰서 올릴 것 — 설정 화면에 그대로 노출해서, 실제 폰에 반영된 버전을 화면 캡처 하나로 바로 확인할 수 있게 함
+const APP_BUILD = 'v1.24.0'; // sw.js의 CACHE 버전과 항상 맞춰서 올릴 것 — 설정 화면에 그대로 노출해서, 실제 폰에 반영된 버전을 화면 캡처 하나로 바로 확인할 수 있게 함
 const APP_VERSION_LABEL = '자산 일기 테스트판 · Perplexity 리뷰 반영';
 /* 리밸런싱 세금·수수료 근사치(설정에서 조정 가능). 실제 세율은 보유기간·공제·상품에 따라 달라요. */
 const DEFAULT_TAX_RATES = {
@@ -654,7 +662,8 @@ function portfolioEligible(a) {
   return true;
 }
 function portfolioAssets() { return S.assets.filter(portfolioEligible); }
-function needsFx() { return S.assets.some(a => (a.mode === 'qty' && a.cur === 'USD') || (a.cat === '원자재' && a.src === 'twelvedata')); }
+/* 해외주식을 무료 시세 서버에서 받으면 달러로 내려오므로, 환율을 먼저 확보해야 합니다. */
+function needsFx() { return S.assets.some(a => (a.mode === 'qty' && a.cur === 'USD') || (a.cat === '원자재' && a.src === 'twelvedata') || (a.mode === 'qty' && a.cat === '해외주식' && a.src === 'twelvedata')); }
 function prevSnapshot() { return S.snapshots.filter(s => s.month < monthKey()).sort((a, b) => b.month.localeCompare(a.month))[0]; }
 
 /* ───────── 렌더링 ───────── */
@@ -2068,7 +2077,7 @@ function viewSettings() {
   <section class="card" style="margin-top:8px">
     <label class="field"><span>Twelve Data API 키 (주식·ETF 시세용)</span>
       <input class="input" id="twelveKey" autocomplete="off" autocapitalize="off" spellcheck="false" value="${esc(s.twelveKey)}" placeholder="twelvedata.com에서 무료 발급"></label>
-    <p class="hint">키는 이 기기에만 저장돼요. 무료 키는 분당 8회 제한이 있어요. 코인(CoinGecko)과 환율은 키가 필요 없어요.</p>
+    <p class="hint">국내주식(코스피·코스닥 전종목)과 해외주식(S&P500·나스닥100)은 무료 시세 서버에서 받아오기 때문에 이 키가 없어도 돼요. 키는 금(XAU/USD)이나 그 밖의 해외 거래소 종목에만 쓰여요. 키는 이 기기에만 저장되고, 무료 키는 분당 8회 제한이 있어요. 코인(CoinGecko)과 환율도 키가 필요 없어요.</p>
     <label class="field"><span>달러 환율 직접 입력 (비워두면 자동)</span>
       <input class="input num" id="fxManual" inputmode="decimal" value="${s.fxManual || ''}" placeholder="${S.fx.USD ? '자동: ' + nf2.format(S.fx.USD) : '예: 1,380'}"></label>
     <label class="field"><span>🤖 Claude API 키 (캡처 AI 인식용, 선택)</span>
@@ -2108,7 +2117,8 @@ function viewSettings() {
     <p class="small muted" style="margin:0 0 10px">자산 ${S.assets.length}개 · 거래 ${S.txs.length}건 · 가계부 ${S.book.entries.length}건 · 일기 ${S.snapshots.length}개 · 목표 ${s.goals.length}개</p>
     <button class="btn danger block" style="margin:0" data-action="reset-all">🧹 모든 데이터 지우기</button>
   </section>
-  <p class="small faint" style="margin:18px 4px;text-align:center">🧪 ${APP_VERSION_LABEL} (${APP_BUILD}) · 실제 데이터와 분리 저장 · 내 폰에만 저장돼요</p>`;
+  <p class="small faint" style="margin:18px 4px;text-align:center">🧪 ${APP_VERSION_LABEL} (${APP_BUILD}) · 실제 데이터와 분리 저장 · 내 폰에만 저장돼요</p>
+  <p class="small faint" style="margin:4px 4px 18px;text-align:center">Asset Note © 2026 cotmoool-dev.<br>개인 자산 기록 및 분석용 도구입니다.<br>투자 판단과 책임은 사용자 본인에게 있습니다.</p>`;
 }
 
 /* ───────── 시트(폼) ───────── */
@@ -2192,7 +2202,7 @@ function assetForm(a, draftOverride) {
           <option value="coingecko" ${a.src === 'coingecko' ? 'selected' : ''}>코인 자동</option></select></label>
         <label class="field"><span>통화</span><select class="input" id="f_cur"><option value="KRW" ${a.cur === 'KRW' ? 'selected' : ''}>원화</option><option value="USD" ${a.cur === 'USD' ? 'selected' : ''}>달러</option></select></label>
       </div>
-      <label class="field" id="symWrap" ${a.src === 'manual' ? 'hidden' : ''}><span id="symLabel">${a.src === 'coingecko' ? '코인 선택 (ID 자동 입력)' : '티커'}</span><input class="input" id="f_symbol" list="${a.src === 'coingecko' ? 'coinDatalist' : ''}" autocapitalize="off" spellcheck="false" value="${esc(a.symbol)}" placeholder="${a.src === 'coingecko' ? '목록에서 고르거나 ID 직접 입력 (예: bitcoin)' : 'VOO, QQQ, 005930:KRX'}"></label>
+      <label class="field" id="symWrap" ${a.src === 'manual' ? 'hidden' : ''}><span id="symLabel">${a.src === 'coingecko' ? '코인 선택 (ID 자동 입력)' : '티커'}</span><input class="input" id="f_symbol" list="${a.src === 'coingecko' ? 'coinDatalist' : ''}" autocapitalize="off" spellcheck="false" value="${esc(a.symbol)}" placeholder="${a.src === 'coingecko' ? '목록에서 고르거나 ID 직접 입력 (예: bitcoin)' : '005930, VOO, QQQ'}"></label>
       <datalist id="coinDatalist">${COINGECKO_COINS.map(([id, label]) => `<option value="${id}">${esc(label)}</option>`).join('')}</datalist>
       <p class="hint" id="symHint" ${a.src === 'manual' ? 'hidden' : ''}>${symHint(a.src, a.cat)}</p>
       <div class="row2">
@@ -2369,7 +2379,7 @@ function assetForm(a, draftOverride) {
     $sheetBody.querySelector('#symWrap').hidden = v === 'manual';
     $sheetBody.querySelector('#symHint').hidden = v === 'manual';
     $sheetBody.querySelector('#symLabel').textContent = v === 'coingecko' ? '코인 선택 (ID 자동 입력)' : '티커';
-    $sheetBody.querySelector('#f_symbol').placeholder = v === 'coingecko' ? '목록에서 고르거나 ID 직접 입력 (예: bitcoin)' : 'VOO, QQQ, 005930:KRX';
+    $sheetBody.querySelector('#f_symbol').placeholder = v === 'coingecko' ? '목록에서 고르거나 ID 직접 입력 (예: bitcoin)' : '005930, VOO, QQQ';
     $sheetBody.querySelector('#symHint').textContent = symHint(v, val('f_cat'));
     if (v === 'coingecko') $sheetBody.querySelector('#f_cur').value = 'KRW';
     applyCoinPriceMode();
@@ -2480,7 +2490,7 @@ function autoFillPensionProduct() {
 function symHint(src, cat) {
   if (cat === '원자재' && src === 'twelvedata') return '국제 금 시세(XAU/USD, 트로이온스당 달러)를 가져와 환율로 원/그램으로 환산해요. 무료 요금제에서는 상품(commodity) 시세가 안 나올 수 있어요 — 그럴 땐 "직접 입력"을 이용하세요.';
   return src === 'coingecko' ? '목록에 있는 코인은 이름만 고르면 ID·시세가 자동으로 들어가요. 목록에 없으면 coingecko.com 코인 페이지 주소의 영문 이름을 직접 입력하세요 (예: bitcoin). 현재가 칸은 자동으로 채워지고 직접 수정하려면 아래 "직접 입력으로 전환"을 켜세요.'
-    : '미국 주식·ETF는 티커만(VOO), 해외 거래소는 티커:거래소 형식이에요. 국내 종목은 무료 키에서 지원되지 않을 수 있어 “직접 입력”을 권장해요.';
+    : '국내 종목은 6자리 코드(005930), 미국 주식·ETF는 티커(VOO)만 넣으면 무료 시세 서버에서 자동으로 받아와요 — 키가 없어도 돼요. 그 밖의 해외 거래소는 티커:거래소 형식이고, 이때만 Twelve Data 키가 필요해요.';
 }
 function compRow(c) {
   return `<div class="comp-edit"><input class="input" data-cn value="${esc(c.name)}" placeholder="구성 이름"><input class="input num" data-cp inputmode="decimal" value="${c.pct || ''}" placeholder="%"><button type="button" class="x-btn" aria-label="삭제">✕</button></div>`;
@@ -2815,6 +2825,29 @@ async function fetchJSON(url, ms = 12000) {
   try { const r = await fetch(url, { signal: ctl.signal, cache: 'no-store' }); if (!r.ok) throw new Error('HTTP ' + r.status); return await r.json(); }
   finally { clearTimeout(tm); }
 }
+/* ───────── 무료 시세 서버(prices.json) ─────────
+ * GitHub Actions가 매일 국내주식 전종목(코스피+코스닥)과 해외주식(S&P500+나스닥100)
+ * 종가를 모아 공개 저장소에 올려두는 JSON 파일 하나입니다.
+ *  - API 키가 필요 없고, 한 번 요청으로 전 종목을 받으므로 종목 수 제한도 없습니다.
+ *  - 값은 "직전 거래일 종가"라서 장중 실시간 가격과는 차이가 있습니다.
+ *  - 금(XAU/USD)은 이 목록에 없어서 기존처럼 Twelve Data로 조회합니다. */
+const PRICES_JSON_URL = 'https://raw.githubusercontent.com/cotmoool-dev/my-portfolio-prices/main/prices.json';
+/* 티커 하나를 prices.json에서 찾습니다. 못 찾으면 null을 돌려주고 Twelve Data로 넘어갑니다.
+ *   국내주식: "005930" 또는 "005930:KRX" → kr["005930"] (원)
+ *   해외주식: "VOO", "BRK.B"/"BRK-B"      → us["VOO"]    (달러) */
+function lookupFeedPrice(feed, symbol) {
+  if (!feed) return null;
+  const raw = String(symbol || '').trim().toUpperCase();
+  if (!raw) return null;
+  const kr = raw.match(/^(\d{6})(?::KRX)?$/);
+  if (kr) {
+    const p = Number(feed.kr && feed.kr[kr[1]]);
+    return isFinite(p) && p > 0 ? { price: p, cur: 'KRW' } : null;
+  }
+  if (raw.includes(':')) return null;   // 그 밖의 해외 거래소 지정은 Twelve Data 담당
+  const p = Number(feed.us && feed.us[raw.replace(/\./g, '-')]);   // BRK.B ↔ BRK-B 표기 차이 흡수
+  return isFinite(p) && p > 0 ? { price: p, cur: 'USD' } : null;
+}
 /* 코인 자산 등록·수정 화면에서 "지금 바로" 1개 코인 시세만 가져올 때 씀 (전체 새로고침과 별개, 호출 1회) */
 async function fetchCoinPrice(id) {
   const clean = String(id || '').trim().toLowerCase();
@@ -2855,33 +2888,52 @@ async function refreshPrices(auto = false) {
         }
       } catch (e) { errs.push('코인: ' + e.message); }
     }
-    // 주식·ETF
+    // 주식·ETF — ① 무료 시세 서버(prices.json)에서 먼저 찾고, ② 거기 없는 종목만 Twelve Data로
     const stocks = S.assets.filter(a => a.mode === 'qty' && a.src === 'twelvedata' && a.symbol);
     if (stocks.length) {
-      if (!S.settings.twelveKey) errs.push('주식: 설정에서 Twelve Data 키를 입력하세요');
-      else {
-        const syms = [...new Set(stocks.map(a => a.symbol.toUpperCase()))].slice(0, 8);
-        if (stocks.length > 8) errs.push('주식: 무료 한도 때문에 8종목까지만 갱신했어요');
-        const prices = {};
-        for (const sym of syms) {
-          const [s, ex] = sym.split(':');
-          let url = 'https://api.twelvedata.com/price?symbol=' + encodeURIComponent(s) + '&apikey=' + encodeURIComponent(S.settings.twelveKey);
-          if (ex) url += '&exchange=' + encodeURIComponent(ex);
-          try {
-            const d = await fetchJSON(url);
-            if (d && d.price != null && isFinite(Number(d.price))) prices[sym] = Number(d.price);
-            else errs.push(`${sym}: ${d && d.message ? d.message.slice(0, 80) : '가격 없음'}`);
-          } catch (e) { errs.push(`${sym}: ${e.message}`); }
-        }
-        const GRAMS_PER_OZ = 31.1034768;
-        for (const a of stocks) {
-          const p = prices[a.symbol.toUpperCase()]; if (!p) continue;
-          if (a.cat === '원자재') {
-            const fx = fxRate('USD');
-            if (!fx) { errs.push('금: 환율이 없어 원/그램으로 환산하지 못했어요. 잠시 후 다시 눌러 주세요'); continue; }
-            a.price = p / GRAMS_PER_OZ * fx;
-          } else a.price = p;
-          a.priceAt = stamp; ok++;
+      // ① 공개 JSON 한 번만 받아옵니다(키 불필요·종목 수 제한 없음). 금은 목록에 없어 건너뜁니다.
+      let feed = null;
+      if (stocks.some(a => a.cat !== '원자재')) {
+        try { feed = await fetchJSON(PRICES_JSON_URL); }
+        catch (e) { errs.push('무료 시세 서버: ' + e.message); }
+      }
+      const feedStamp = (feed && feed.date) ? feed.date + ' 종가' : stamp;
+      const leftovers = [];
+      for (const a of stocks) {
+        const hit = (a.cat === '원자재') ? null : lookupFeedPrice(feed, a.symbol);
+        if (!hit) { leftovers.push(a); continue; }
+        /* 통화는 시세 출처에 맞춰 덮어씁니다 — 국내주식은 원, 해외주식은 달러로 내려오는데
+           자산에 설정된 통화가 이와 다르면 평가액이 크게 어긋나기 때문입니다. */
+        a.price = hit.price; a.cur = hit.cur; a.priceAt = feedStamp; ok++;
+      }
+      // ② 목록에 없는 종목(금·그 밖의 해외 거래소·지수 밖 종목)만 기존 Twelve Data 경로로
+      if (leftovers.length) {
+        if (!S.settings.twelveKey) errs.push(`시세 목록에 없는 ${leftovers.length}종목은 Twelve Data 키가 있어야 갱신돼요 — 설정에서 키를 넣거나 “직접 입력”으로 바꿔 주세요`);
+        else {
+          const uniq = [...new Set(leftovers.map(a => a.symbol.toUpperCase()))];
+          const syms = uniq.slice(0, 8);
+          if (uniq.length > 8) errs.push('주식: 무료 한도 때문에 8종목까지만 갱신했어요');
+          const prices = {};
+          for (const sym of syms) {
+            const [s, ex] = sym.split(':');
+            let url = 'https://api.twelvedata.com/price?symbol=' + encodeURIComponent(s) + '&apikey=' + encodeURIComponent(S.settings.twelveKey);
+            if (ex) url += '&exchange=' + encodeURIComponent(ex);
+            try {
+              const d = await fetchJSON(url);
+              if (d && d.price != null && isFinite(Number(d.price))) prices[sym] = Number(d.price);
+              else errs.push(`${sym}: ${d && d.message ? d.message.slice(0, 80) : '가격 없음'}`);
+            } catch (e) { errs.push(`${sym}: ${e.message}`); }
+          }
+          const GRAMS_PER_OZ = 31.1034768;
+          for (const a of leftovers) {
+            const p = prices[a.symbol.toUpperCase()]; if (!p) continue;
+            if (a.cat === '원자재') {
+              const fx = fxRate('USD');
+              if (!fx) { errs.push('금: 환율이 없어 원/그램으로 환산하지 못했어요. 잠시 후 다시 눌러 주세요'); continue; }
+              a.price = p / GRAMS_PER_OZ * fx;
+            } else a.price = p;
+            a.priceAt = stamp; ok++;
+          }
         }
       }
     }
